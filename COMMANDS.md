@@ -27,6 +27,23 @@ The list below covers every supported command.
 | `GETBIT` | |
 | `SETBIT` | |
 
+### 2.2 Connection
+
+| Command | Notes |
+|---|---|
+| `AUTH` | |
+| `CLIENT GETNAME` | Answered by proxy |
+| `CLIENT HELP` | Answered by proxy |
+| `CLIENT ID` | Answered by proxy |
+| `CLIENT INFO` | Answered by proxy |
+| `CLIENT KILL` | Planned |
+| `CLIENT LIST` | Planned |
+| `CLIENT SETNAME` | Stored on the proxy only, never sent to a backend |
+| `ECHO` | Answered by proxy |
+| `HELLO` | |
+| `PING` | Answered by proxy |
+| `RESET` | Planned |
+
 ## 3. Fan-out command details
 
 These commands are split per key into several sub-commands sent to each key's owning node, then
@@ -162,3 +179,18 @@ directly affect command behavior are listed here:
 | `CLUSTERSCAN` | |
 | `READONLY` | |
 | `READWRITE` | |
+| `CLIENT CACHING` | |
+| `CLIENT CAPA` | |
+| `CLIENT GETREDIR` | |
+| `CLIENT IMPORT-SOURCE` | |
+| `CLIENT NO-EVICT` | |
+| `CLIENT NO-TOUCH` | |
+| `CLIENT PAUSE` | |
+| `CLIENT REPLY` | |
+| `CLIENT SETINFO` | |
+| `CLIENT TRACKING` | |
+| `CLIENT TRACKINGINFO` | |
+| `CLIENT UNBLOCK` | |
+| `CLIENT UNPAUSE` | |
+| `QUIT` | |
+| `SELECT` | |
