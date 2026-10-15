@@ -126,6 +126,41 @@ The list below covers every supported command.
 | `HTTL` | |
 | `HVALS` | |
 
+### 2.6 HyperLogLog
+
+| Command | Notes |
+|---|---|
+| `PFADD` | |
+| `PFCOUNT` | With multiple keys, every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `PFMERGE` | The destkey and every sourcekey must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+
+### 2.7 List
+
+| Command | Notes |
+|---|---|
+| `BLMOVE` | the source and destination keys must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `BLMPOP` | every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `BLPOP` | every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `BRPOP` | every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `BRPOPLPUSH` | the source and destination keys must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `LINDEX` | |
+| `LINSERT` | |
+| `LLEN` | |
+| `LMOVE` | The source and destination keys must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `LMPOP` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `LPOP` | |
+| `LPOS` | |
+| `LPUSH` | |
+| `LPUSHX` | |
+| `LRANGE` | |
+| `LREM` | |
+| `LSET` | |
+| `LTRIM` | |
+| `RPOP` | |
+| `RPOPLPUSH` | The source and destination keys must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `RPUSH` | |
+| `RPUSHX` | |
+
 ## 3. Fan-out command details
 
 These commands are split per key into several sub-commands sent to each key's owning node, then
@@ -280,3 +315,5 @@ directly affect command behavior are listed here:
 | `MOVE` | |
 | `WAIT` | |
 | `WAITAOF` | |
+| `PFDEBUG` | |
+| `PFSELFTEST` | |
