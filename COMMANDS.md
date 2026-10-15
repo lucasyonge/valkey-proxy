@@ -220,6 +220,55 @@ The list below covers every supported command.
 | `ZUNION` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
 | `ZUNIONSTORE` | The destination and every source key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
 
+### 2.10 Set
+
+| Command | Notes |
+|---|---|
+| `SADD` | |
+| `SCARD` | |
+| `SDIFF` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `SDIFFSTORE` | The destination and every source key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `SINTER` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `SINTERCARD` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `SINTERSTORE` | The destination and every source key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `SISMEMBER` | |
+| `SMEMBERS` | |
+| `SMISMEMBER` | |
+| `SMOVE` | The source and destination keys must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `SPOP` | |
+| `SRANDMEMBER` | |
+| `SREM` | |
+| `SSCAN` | |
+| `SUNION` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `SUNIONSTORE` | The destination and every source key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+
+### 2.11 Stream
+
+| Command | Notes |
+|---|---|
+| `XACK` | |
+| `XADD` | |
+| `XAUTOCLAIM` | |
+| `XCLAIM` | |
+| `XDEL` | |
+| `XGROUP CREATE` | |
+| `XGROUP CREATECONSUMER` | |
+| `XGROUP DELCONSUMER` | |
+| `XGROUP DESTROY` | |
+| `XGROUP HELP` | |
+| `XGROUP SETID` | |
+| `XINFO CONSUMERS` | |
+| `XINFO GROUPS` | |
+| `XINFO HELP` | |
+| `XINFO STREAM` | |
+| `XLEN` | |
+| `XPENDING` | |
+| `XRANGE` | |
+| `XREAD` | Every stream key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `XREADGROUP` | Every stream key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `XREVRANGE` | |
+| `XTRIM` | |
+
 ## 3. Fan-out command details
 
 These commands are split per key into several sub-commands sent to each key's owning node, then
@@ -376,3 +425,4 @@ directly affect command behavior are listed here:
 | `WAITAOF` | |
 | `PFDEBUG` | |
 | `PFSELFTEST` | |
+| `XSETID` | |
