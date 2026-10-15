@@ -44,6 +44,40 @@ The list below covers every supported command.
 | `PING` | Answered by proxy |
 | `RESET` | Planned |
 
+### 2.3 Generic
+
+| Command | Notes |
+|---|---|
+| `COPY` | The source and destination keys must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `DEL` | Fanned out per key to each owning node |
+| `DUMP` | |
+| `EXISTS` | Fanned out per key to each owning node |
+| `EXPIRE` | |
+| `EXPIREAT` | |
+| `EXPIRETIME` | |
+| `KEYS` | Broadcast to every primary node; results concatenated |
+| `OBJECT ENCODING` | |
+| `OBJECT FREQ` | |
+| `OBJECT HELP` | Forwarded to a single primary node |
+| `OBJECT IDLETIME` | |
+| `OBJECT REFCOUNT` | |
+| `PERSIST` | |
+| `PEXPIRE` | |
+| `PEXPIREAT` | |
+| `PEXPIRETIME` | |
+| `PTTL` | |
+| `RANDOMKEY` | Forwarded to a single primary node |
+| `RENAME` | The source and destination keys must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `RENAMENX` | The source and destination keys must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `RESTORE` | |
+| `SCAN` | Broadcast to every primary node; each node's cursor is encoded into the returned cursor |
+| `SORT` | |
+| `SORT_RO` | |
+| `TOUCH` | Fanned out per key to each owning node |
+| `TTL` | |
+| `TYPE` | |
+| `UNLINK` | Fanned out per key to each owning node |
+
 ## 3. Fan-out command details
 
 These commands are split per key into several sub-commands sent to each key's owning node, then
@@ -194,3 +228,7 @@ directly affect command behavior are listed here:
 | `CLIENT UNPAUSE` | |
 | `QUIT` | |
 | `SELECT` | |
+| `MIGRATE` | |
+| `MOVE` | |
+| `WAIT` | |
+| `WAITAOF` | |
