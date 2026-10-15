@@ -78,6 +78,54 @@ The list below covers every supported command.
 | `TYPE` | |
 | `UNLINK` | Fanned out per key to each owning node |
 
+### 2.4 Geospatial Index
+
+| Command | Notes |
+|---|---|
+| `GEOADD` | |
+| `GEODIST` | |
+| `GEOHASH` | |
+| `GEOPOS` | |
+| `GEORADIUS` | With `STORE`/`STOREDIST`, the source key and the store key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `GEORADIUSBYMEMBER` | With `STORE`/`STOREDIST`, the source key and the store key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `GEORADIUSBYMEMBER_RO` | |
+| `GEORADIUS_RO` | |
+| `GEOSEARCH` | |
+| `GEOSEARCHSTORE` | The destination and source keys must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+
+### 2.5 Hash
+
+| Command | Notes |
+|---|---|
+| `HDEL` | |
+| `HEXISTS` | |
+| `HEXPIRE` | |
+| `HEXPIREAT` | |
+| `HEXPIRETIME` | |
+| `HGET` | |
+| `HGETALL` | |
+| `HGETDEL` | |
+| `HGETEX` | |
+| `HINCRBY` | |
+| `HINCRBYFLOAT` | |
+| `HKEYS` | |
+| `HLEN` | |
+| `HMGET` | |
+| `HMSET` | |
+| `HPERSIST` | |
+| `HPEXPIRE` | |
+| `HPEXPIREAT` | |
+| `HPEXPIRETIME` | |
+| `HPTTL` | |
+| `HRANDFIELD` | |
+| `HSCAN` | |
+| `HSET` | |
+| `HSETEX` | |
+| `HSETNX` | |
+| `HSTRLEN` | |
+| `HTTL` | |
+| `HVALS` | |
+
 ## 3. Fan-out command details
 
 These commands are split per key into several sub-commands sent to each key's owning node, then
