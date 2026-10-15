@@ -161,6 +161,65 @@ The list below covers every supported command.
 | `RPUSH` | |
 | `RPUSHX` | |
 
+### 2.8 Pub/Sub
+
+| Command | Notes |
+|---|---|
+| `PSUBSCRIBE` | |
+| `PUBLISH` | |
+| `PUBSUB CHANNELS` | Broadcast to every primary node |
+| `PUBSUB HELP` | |
+| `PUBSUB NUMPAT` | Broadcast to every primary node |
+| `PUBSUB NUMSUB` | Broadcast to every primary node |
+| `PUBSUB SHARDCHANNELS` | Broadcast to every primary node; Plan not to support later |
+| `PUBSUB SHARDNUMSUB` | Broadcast to every primary node; Plan not to support later |
+| `PUNSUBSCRIBE` | |
+| `SPUBLISH` | Plan not to support later |
+| `SSUBSCRIBE` | Plan not to support later |
+| `SUBSCRIBE` | |
+| `SUNSUBSCRIBE` | |
+| `UNSUBSCRIBE` | |
+
+### 2.9 Sorted Set
+
+| Command | Notes |
+|---|---|
+| `BZMPOP` | every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `BZPOPMAX` | every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `BZPOPMIN` | every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `ZADD` | |
+| `ZCARD` | |
+| `ZCOUNT` | |
+| `ZDIFF` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `ZDIFFSTORE` | The destination and every source key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `ZINCRBY` | |
+| `ZINTER` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `ZINTERCARD` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `ZINTERSTORE` | The destination and every source key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `ZLEXCOUNT` | |
+| `ZMPOP` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `ZMSCORE` | |
+| `ZPOPMAX` | |
+| `ZPOPMIN` | |
+| `ZRANDMEMBER` | |
+| `ZRANGE` | |
+| `ZRANGEBYLEX` | |
+| `ZRANGEBYSCORE` | |
+| `ZRANGESTORE` | The destination and source keys must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `ZRANK` | |
+| `ZREM` | |
+| `ZREMRANGEBYLEX` | |
+| `ZREMRANGEBYRANK` | |
+| `ZREMRANGEBYSCORE` | |
+| `ZREVRANGE` | |
+| `ZREVRANGEBYLEX` | |
+| `ZREVRANGEBYSCORE` | |
+| `ZREVRANK` | |
+| `ZSCAN` | |
+| `ZSCORE` | |
+| `ZUNION` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `ZUNIONSTORE` | The destination and every source key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+
 ## 3. Fan-out command details
 
 These commands are split per key into several sub-commands sent to each key's owning node, then
