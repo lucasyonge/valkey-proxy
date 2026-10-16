@@ -25,7 +25,8 @@ void run_function_tests(const char *host, int port, int *pass, int *fail) {
     const char *libcode =
         "#!lua name=tclib\n"
         "redis.register_function('tcset', function(keys, args) return redis.call('SET', keys[1], args[1]) end)\n"
-        "redis.register_function{function_name='tcget', callback=function(keys, args) return redis.call('GET', keys[1]) end, flags={'no-writes'}}";
+        "redis.register_function{function_name='tcget', callback=function(keys, args) return redis.call('GET', "
+        "keys[1]) end, flags={'no-writes'}}";
 
     proxy_cmd(fd, r, sizeof(r), 3, "FUNCTION", "LOAD", libcode);
     CHECK(strcmp(r, "tclib") == 0, "FUNCTION LOAD: returns the library name", pass, fail);
@@ -37,7 +38,8 @@ void run_function_tests(const char *host, int port, int *pass, int *fail) {
     /* reloading with REPLACE must succeed */
     {
         const char *args[4] = {"FUNCTION", "LOAD", "REPLACE", libcode};
-        int arglens[4]; for (int i = 0; i < 4; i++) arglens[i] = (int)strlen(args[i]);
+        int arglens[4];
+        for (int i = 0; i < 4; i++) arglens[i] = (int)strlen(args[i]);
         resp_send_raw(fd, 4, args, arglens);
     }
     resp_next_str(fd, r, sizeof(r));
@@ -64,7 +66,8 @@ void run_function_tests(const char *host, int port, int *pass, int *fail) {
      * same key pair used by the SCRIPT/EVAL cross-slot tests). */
     {
         const char *args[5] = {"FCALL", "tcset", "2", "tc:cs:foo", "tc:cs:bar"};
-        int arglens[5]; for (int i = 0; i < 5; i++) arglens[i] = (int)strlen(args[i]);
+        int arglens[5];
+        for (int i = 0; i < 5; i++) arglens[i] = (int)strlen(args[i]);
         resp_send_raw(fd, 5, args, arglens);
     }
     resp_next_str(fd, r, sizeof(r));
@@ -86,7 +89,8 @@ void run_function_tests(const char *host, int port, int *pass, int *fail) {
     /* ── FCALL_RO cross-slot (should return CROSSSLOT error) ─────────────── */
     {
         const char *args[5] = {"FCALL_RO", "tcget", "2", "tc:cs:foo", "tc:cs:bar"};
-        int arglens[5]; for (int i = 0; i < 5; i++) arglens[i] = (int)strlen(args[i]);
+        int arglens[5];
+        for (int i = 0; i < 5; i++) arglens[i] = (int)strlen(args[i]);
         resp_send_raw(fd, 5, args, arglens);
     }
     resp_next_str(fd, r, sizeof(r));

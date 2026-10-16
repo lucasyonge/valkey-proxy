@@ -36,8 +36,7 @@ void run_acl_tests(const char *host, int port, int *pass, int *fail) {
         int matched = 1;
         for (int i = 0; i < n; i++) {
             resp_next_str(fd, r, sizeof(r));
-            if (i >= (int)(sizeof(help_lines) / sizeof(help_lines[0])) || strcmp(r, help_lines[i]) != 0)
-                matched = 0;
+            if (i >= (int)(sizeof(help_lines) / sizeof(help_lines[0])) || strcmp(r, help_lines[i]) != 0) matched = 0;
         }
         CHECK(matched, "ACL HELP: help text matches the expected fixed lines", pass, fail);
     }
@@ -91,8 +90,7 @@ void run_acl_tests(const char *host, int port, int *pass, int *fail) {
     int fa = proxy_connect(host, port);
     char big[4096];
     proxy_cmd(fa, r, sizeof(r), 3, "AUTH", "tc-nosuchuser", "badpass");
-    CHECK(strncmp(r, "-WRONGPASS", 10) == 0,
-          "AUTH bad credentials: backend -WRONGPASS relayed", pass, fail);
+    CHECK(strncmp(r, "-WRONGPASS", 10) == 0, "AUTH bad credentials: backend -WRONGPASS relayed", pass, fail);
     proxy_cmd(fa, r, sizeof(r), 4, "AUTH", "a", "b", "c");
     CHECK(r[0] == '-' && strstr(r, "wrong number of arguments") != NULL,
           "AUTH with 3 arguments: wrong number of arguments", pass, fail);
@@ -137,8 +135,8 @@ void run_acl_tests(const char *host, int port, int *pass, int *fail) {
         proxy_cmd(fa, r, sizeof(r), 2, "GET", "tc:acl:auth");
         CHECK(strcmp(r, "v-auth") == 0, "AUTH read-only user: GET allowed", pass, fail);
         proxy_cmd(fa, r, sizeof(r), 3, "SET", "tc:acl:auth", "v-denied");
-        CHECK(strncmp(r, "-NOPERM", 7) == 0,
-              "AUTH read-only user: SET is -NOPERM (runs as that user, not default)", pass, fail);
+        CHECK(strncmp(r, "-NOPERM", 7) == 0, "AUTH read-only user: SET is -NOPERM (runs as that user, not default)",
+              pass, fail);
 
         proxy_cmd(fa, r, sizeof(r), 3, "AUTH", "default", "x");
         CHECK(strcmp(r, "+OK") == 0, "AUTH default after a real user: +OK", pass, fail);

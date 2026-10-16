@@ -165,8 +165,8 @@ void run_hash_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, "*2") == 0, "HSCAN: returns outer *2 array", pass, fail);
     {
         char cur[64];
-        resp_next_str(fd, cur, sizeof(cur));     /* cursor value */
-        resp_next_str(fd, r, sizeof(r));         /* "*N" inner array header */
+        resp_next_str(fd, cur, sizeof(cur)); /* cursor value */
+        resp_next_str(fd, r, sizeof(r));     /* "*N" inner array header */
         int n = atoi(r + 1);
         CHECK(n >= 0, "HSCAN: inner array count is non-negative", pass, fail);
         char tmp[128];
@@ -222,8 +222,7 @@ void run_hash_tests(const char *host, int port, int *pass, int *fail) {
         resp_next_str(fd, r2, sizeof(r2));
         {
             long long got = atoll(r2 + 1);
-            CHECK(r2[0] == ':' && got == ts,
-                  "HEXPIRETIME: returns the set expiry timestamp", pass, fail);
+            CHECK(r2[0] == ':' && got == ts, "HEXPIRETIME: returns the set expiry timestamp", pass, fail);
         }
     }
 
@@ -289,8 +288,7 @@ void run_hash_tests(const char *host, int port, int *pass, int *fail) {
     resp_next_str(fd, r2, sizeof(r2));
     {
         long long v = atoll(r2 + 1);
-        CHECK(r2[0] == ':' && v > 0 && v <= 100,
-              "HSETEX: field TTL is in (0, 100]", pass, fail);
+        CHECK(r2[0] == ':' && v > 0 && v <= 100, "HSETEX: field TTL is in (0, 100]", pass, fail);
     }
 
     proxy_cmd(fd, r, sizeof(r), 1, "FLUSHDB");

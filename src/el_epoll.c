@@ -2,7 +2,7 @@
 #include <sys/epoll.h>
 
 typedef struct {
-    int                epfd;
+    int epfd;
     struct epoll_event *evbuf;
 } EpollState;
 
@@ -10,9 +10,16 @@ static int el_api_create(EventLoop *el) {
     EpollState *s = malloc(sizeof(*s));
     if (!s) return -1;
     s->evbuf = malloc(sizeof(struct epoll_event) * el->max_events);
-    if (!s->evbuf) { free(s); return -1; }
+    if (!s->evbuf) {
+        free(s);
+        return -1;
+    }
     s->epfd = epoll_create1(0);
-    if (s->epfd < 0) { free(s->evbuf); free(s); return -1; }
+    if (s->epfd < 0) {
+        free(s->evbuf);
+        free(s);
+        return -1;
+    }
     el->state = s;
     return 0;
 }
@@ -28,11 +35,10 @@ static int el_api_add(EventLoop *el, int fd, int mask) {
     EpollState *s = el->state;
     struct epoll_event ev;
     ev.data.fd = fd;
-    ev.events  = EPOLLET;
+    ev.events = EPOLLET;
     if (mask & EL_READABLE) ev.events |= EPOLLIN;
     if (mask & EL_WRITABLE) ev.events |= EPOLLOUT;
-    if (epoll_ctl(s->epfd, EPOLL_CTL_MOD, fd, &ev) < 0)
-        return epoll_ctl(s->epfd, EPOLL_CTL_ADD, fd, &ev);
+    if (epoll_ctl(s->epfd, EPOLL_CTL_MOD, fd, &ev) < 0) return epoll_ctl(s->epfd, EPOLL_CTL_ADD, fd, &ev);
     return 0;
 }
 
@@ -47,14 +53,14 @@ static int el_api_poll(EventLoop *el, int timeout_ms) {
     if (n < 0) return (errno == EINTR) ? 0 : -1;
     for (int i = 0; i < n; i++) {
         uint32_t e = s->evbuf[i].events;
-        el->fired[i].fd   = s->evbuf[i].data.fd;
+        el->fired[i].fd = s->evbuf[i].data.fd;
         el->fired[i].mask = 0;
-        if (e & (EPOLLIN  | EPOLLERR | EPOLLHUP | EPOLLRDHUP))
-            el->fired[i].mask |= EL_READABLE;
-        if (e & (EPOLLOUT | EPOLLERR | EPOLLHUP))
-            el->fired[i].mask |= EL_WRITABLE;
+        if (e & (EPOLLIN | EPOLLERR | EPOLLHUP | EPOLLRDHUP)) el->fired[i].mask |= EL_READABLE;
+        if (e & (EPOLLOUT | EPOLLERR | EPOLLHUP)) el->fired[i].mask |= EL_WRITABLE;
     }
     return n;
 }
 
-static const char *el_api_name(void) { return "epoll"; }
+static const char *el_api_name(void) {
+    return "epoll";
+}

@@ -10,8 +10,7 @@ static void drain_resp(int fd) {
     if (!resp_next_str(fd, tmp, sizeof(tmp))) return;
     if (tmp[0] == '*') {
         int n = atoi(tmp + 1);
-        for (int i = 0; i < n; i++)
-            drain_resp(fd);
+        for (int i = 0; i < n; i++) drain_resp(fd);
     }
 }
 
@@ -27,8 +26,7 @@ static void drain_xread_streams(int fd, int nstreams) {
         resp_next_str(fd, tmp, sizeof(tmp)); /* $.. stream name           */
         resp_next_str(fd, tmp, sizeof(tmp)); /* *M  entries array header  */
         int m = (tmp[0] == '*') ? atoi(tmp + 1) : 0;
-        for (int j = 0; j < m; j++)
-            drain_resp(fd);                  /* each entry: [id, fields]  */
+        for (int j = 0; j < m; j++) drain_resp(fd); /* each entry: [id, fields]  */
     }
 }
 
@@ -54,7 +52,8 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
 
     proxy_cmd(fd, r, sizeof(r), 7, "XADD", "tc:st:s1", "*", "f1", "hello", "f2", "world");
     CHECK(r[0] != '-' && r[0] != '\0', "XADD: returns entry ID", pass, fail);
-    char id1[512]; snprintf(id1, sizeof(id1), "%s", r);
+    char id1[512];
+    snprintf(id1, sizeof(id1), "%s", r);
 
     proxy_cmd(fd, r, sizeof(r), 7, "XADD", "tc:st:s1", "*", "name", "alice", "age", "30");
     CHECK(r[0] != '-', "XADD: second entry added", pass, fail);
@@ -74,12 +73,18 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_next_str(fd, r, sizeof(r));
     CHECK(strcmp(r, "*3") == 0, "XRANGE: all entries returns 3-element array", pass, fail);
     /* each entry is *2 [id, fields_array] — use recursive drain */
-    { int n = (r[0]=='*') ? atoi(r+1) : 0; for (int i=0; i<n; i++) drain_resp(fd); }
+    {
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
+        for (int i = 0; i < n; i++) drain_resp(fd);
+    }
 
     resp_send(fd, 6, "XRANGE", "tc:st:s1", "-", "+", "COUNT", "2");
     resp_next_str(fd, r, sizeof(r));
     CHECK(strcmp(r, "*2") == 0, "XRANGE COUNT 2: returns 2 entries", pass, fail);
-    { int n = (r[0]=='*') ? atoi(r+1) : 0; for (int i=0; i<n; i++) drain_resp(fd); }
+    {
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
+        for (int i = 0; i < n; i++) drain_resp(fd);
+    }
 
     resp_send(fd, 4, "XRANGE", "tc:st:s1", id1, id1);
     resp_next_str(fd, r, sizeof(r));
@@ -90,7 +95,10 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_send(fd, 4, "XREVRANGE", "tc:st:s1", "+", "-");
     resp_next_str(fd, r, sizeof(r));
     CHECK(strcmp(r, "*3") == 0, "XREVRANGE: all entries returns 3 in reverse", pass, fail);
-    { int n = (r[0]=='*') ? atoi(r+1) : 0; for (int i=0; i<n; i++) drain_resp(fd); }
+    {
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
+        for (int i = 0; i < n; i++) drain_resp(fd);
+    }
 
     resp_send(fd, 6, "XREVRANGE", "tc:st:s1", "+", "-", "COUNT", "1");
     resp_next_str(fd, r, sizeof(r));
@@ -117,7 +125,7 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_next_str(fd, tmp, sizeof(tmp)); /* $.. stream name        */
     resp_next_str(fd, r, sizeof(r));     /* *N  entries header     */
     {
-        int n = (r[0]=='*') ? atoi(r+1) : 0;
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
         CHECK(n == 3, "XREAD single stream: 3 entries", pass, fail);
         for (int i = 0; i < n; i++) drain_resp(fd);
     }
@@ -130,7 +138,7 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_next_str(fd, tmp, sizeof(tmp)); /* stream name    */
     resp_next_str(fd, r, sizeof(r));     /* *N entries     */
     {
-        int n = (r[0]=='*') ? atoi(r+1) : 0;
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
         CHECK(n == 2, "XREAD COUNT 2: 2 entries returned", pass, fail);
         for (int i = 0; i < n; i++) drain_resp(fd);
     }
@@ -154,8 +162,7 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 5, "XADD", "tc:st:cross2", "*", "k", "v");
     resp_send(fd, 6, "XREAD", "STREAMS", "tc:st:cross1", "tc:st:cross2", "0-0", "0-0");
     resp_next_str(fd, r, sizeof(r));
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "XREAD different slots: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "XREAD different slots: returns CROSSSLOT error", pass, fail);
 
     /* ── XSETID ───────────────────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 3, "XSETID", "tc:st:s1", "9999999999999-0");
@@ -174,8 +181,7 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
 
     /* ── XTRIM ────────────────────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 2, "DEL", "tc:st:trim");
-    for (int i = 0; i < 10; i++)
-        proxy_cmd(fd, r, sizeof(r), 5, "XADD", "tc:st:trim", "*", "n", "v");
+    for (int i = 0; i < 10; i++) proxy_cmd(fd, r, sizeof(r), 5, "XADD", "tc:st:trim", "*", "n", "v");
 
     /* XTRIM returns the number of entries *removed* (10 - 5 = 5) */
     proxy_cmd(fd, r, sizeof(r), 4, "XTRIM", "tc:st:trim", "MAXLEN", "5");
@@ -187,11 +193,14 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     /* ── XGROUP CREATE ────────────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 2, "DEL", "tc:st:grp");
     proxy_cmd(fd, r, sizeof(r), 7, "XADD", "tc:st:grp", "*", "f", "v1", "x", "1");
-    char grp_id1[512]; snprintf(grp_id1, sizeof(grp_id1), "%s", r);
+    char grp_id1[512];
+    snprintf(grp_id1, sizeof(grp_id1), "%s", r);
     proxy_cmd(fd, r, sizeof(r), 7, "XADD", "tc:st:grp", "*", "f", "v2", "x", "2");
-    char grp_id2[512]; snprintf(grp_id2, sizeof(grp_id2), "%s", r);
+    char grp_id2[512];
+    snprintf(grp_id2, sizeof(grp_id2), "%s", r);
     proxy_cmd(fd, r, sizeof(r), 7, "XADD", "tc:st:grp", "*", "f", "v3", "x", "3");
-    char grp_id3[512]; snprintf(grp_id3, sizeof(grp_id3), "%s", r);
+    char grp_id3[512];
+    snprintf(grp_id3, sizeof(grp_id3), "%s", r);
 
     proxy_cmd(fd, r, sizeof(r), 5, "XGROUP", "CREATE", "tc:st:grp", "grp1", "0");
     CHECK(strcmp(r, "+OK") == 0, "XGROUP CREATE: returns OK", pass, fail);
@@ -211,26 +220,23 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
      *   *N streams → *2 [name, *M entries] → *2 [id, fields_array]
      * Same three-step header read before we reach the entry count.
      */
-    resp_send(fd, 7, "XREADGROUP", "GROUP", "grp1", "consumer1",
-              "STREAMS", "tc:st:grp", ">");
+    resp_send(fd, 7, "XREADGROUP", "GROUP", "grp1", "consumer1", "STREAMS", "tc:st:grp", ">");
     resp_next_str(fd, r, sizeof(r));
     CHECK(strcmp(r, "*1") == 0, "XREADGROUP: outer array has 1 stream", pass, fail);
     resp_next_str(fd, tmp, sizeof(tmp)); /* *2 stream-pair  */
     resp_next_str(fd, tmp, sizeof(tmp)); /* stream name     */
     resp_next_str(fd, r, sizeof(r));     /* *N entries      */
     {
-        int n = (r[0]=='*') ? atoi(r+1) : 0;
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
         CHECK(n == 3, "XREADGROUP: all 3 entries delivered", pass, fail);
         for (int i = 0; i < n; i++) drain_resp(fd);
     }
 
     /* second call with > returns nil/empty — nothing new to deliver */
-    resp_send(fd, 7, "XREADGROUP", "GROUP", "grp1", "consumer1",
-              "STREAMS", "tc:st:grp", ">");
+    resp_send(fd, 7, "XREADGROUP", "GROUP", "grp1", "consumer1", "STREAMS", "tc:st:grp", ">");
     resp_next_str(fd, r, sizeof(r));
     /* nil array (*-1) or empty array (*0) depending on server version */
-    CHECK(r[0] == '*' && atoi(r+1) <= 0,
-          "XREADGROUP: no new entries after all delivered", pass, fail);
+    CHECK(r[0] == '*' && atoi(r + 1) <= 0, "XREADGROUP: no new entries after all delivered", pass, fail);
 
     /* ── XPENDING ─────────────────────────────────────────────────────── */
     /*
@@ -240,7 +246,7 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_send(fd, 6, "XPENDING", "tc:st:grp", "grp1", "-", "+", "10");
     resp_next_str(fd, r, sizeof(r));
     {
-        int n = (r[0]=='*') ? atoi(r+1) : 0;
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
         CHECK(n == 3, "XPENDING: 3 pending entries for consumer1", pass, fail);
         for (int i = 0; i < n; i++) drain_resp(fd);
     }
@@ -257,7 +263,7 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_send(fd, 7, "XCLAIM", "tc:st:grp", "grp1", "consumer2", "0", grp_id2, grp_id3);
     resp_next_str(fd, r, sizeof(r));
     {
-        int n = (r[0]=='*') ? atoi(r+1) : 0;
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
         CHECK(n == 2, "XCLAIM: claimed 2 entries for consumer2", pass, fail);
         /* each claimed entry is *2 [id, fields_array] */
         for (int i = 0; i < n; i++) drain_resp(fd);
@@ -269,9 +275,9 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_send(fd, 6, "XAUTOCLAIM", "tc:st:grp", "grp1", "consumer1", "0", "0-0");
     resp_next_str(fd, r, sizeof(r));
     CHECK(strcmp(r, "*3") == 0, "XAUTOCLAIM: returns 3-element reply", pass, fail);
-    drain_resp(fd);  /* next-start-id (bulk string)       */
-    drain_resp(fd);  /* claimed entries (*N of entries)   */
-    drain_resp(fd);  /* deleted entry ids (*N of strings) */
+    drain_resp(fd); /* next-start-id (bulk string)       */
+    drain_resp(fd); /* claimed entries (*N of entries)   */
+    drain_resp(fd); /* deleted entry ids (*N of strings) */
 
     /* ── XINFO STREAM ─────────────────────────────────────────────────── */
     /*
@@ -282,7 +288,7 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_next_str(fd, r, sizeof(r));
     CHECK(r[0] == '*', "XINFO STREAM: returns array", pass, fail);
     {
-        int n = (r[0]=='*') ? atoi(r+1) : 0;
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
         for (int i = 0; i < n; i++) drain_resp(fd);
     }
 
@@ -291,7 +297,7 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_next_str(fd, r, sizeof(r));
     CHECK(r[0] == '*', "XINFO GROUPS: returns array", pass, fail);
     {
-        int n = (r[0]=='*') ? atoi(r+1) : 0;
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
         /* each group is a sub-array of flat field-value pairs */
         for (int i = 0; i < n; i++) drain_resp(fd);
     }
@@ -301,7 +307,7 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_next_str(fd, r, sizeof(r));
     CHECK(r[0] == '*', "XINFO CONSUMERS: returns array", pass, fail);
     {
-        int n = (r[0]=='*') ? atoi(r+1) : 0;
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
         for (int i = 0; i < n; i++) drain_resp(fd);
     }
 
@@ -309,7 +315,10 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_send(fd, 2, "XINFO", "HELP");
     resp_next_str(fd, r, sizeof(r));
     CHECK(r[0] == '*', "XINFO HELP: returns array", pass, fail);
-    { int n = (r[0]=='*') ? atoi(r+1) : 0; for (int i=0; i<n; i++) drain_resp(fd); }
+    {
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
+        for (int i = 0; i < n; i++) drain_resp(fd);
+    }
 
     /* ── XGROUP SETID ─────────────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 5, "XGROUP", "SETID", "tc:st:grp", "grp1", "0");
@@ -338,7 +347,10 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_send(fd, 2, "XGROUP", "HELP");
     resp_next_str(fd, r, sizeof(r));
     CHECK(r[0] == '*', "XGROUP HELP: returns array", pass, fail);
-    { int n = (r[0]=='*') ? atoi(r+1) : 0; for (int i=0; i<n; i++) drain_resp(fd); }
+    {
+        int n = (r[0] == '*') ? atoi(r + 1) : 0;
+        for (int i = 0; i < n; i++) drain_resp(fd);
+    }
 
     /* ── XREADGROUP multi-key same slot ───────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 2, "DEL", "{tc:st}:mg1");
@@ -348,21 +360,18 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 5, "XGROUP", "CREATE", "{tc:st}:mg1", "g1", "0");
     proxy_cmd(fd, r, sizeof(r), 5, "XGROUP", "CREATE", "{tc:st}:mg2", "g1", "0");
 
-    resp_send(fd, 9, "XREADGROUP", "GROUP", "g1", "c1",
-              "STREAMS", "{tc:st}:mg1", "{tc:st}:mg2", ">", ">");
+    resp_send(fd, 9, "XREADGROUP", "GROUP", "g1", "c1", "STREAMS", "{tc:st}:mg1", "{tc:st}:mg2", ">", ">");
     resp_next_str(fd, r, sizeof(r));
-    CHECK(strcmp(r, "*2") == 0,
-          "XREADGROUP 2 keys same slot: outer array has 2 streams", pass, fail);
+    CHECK(strcmp(r, "*2") == 0, "XREADGROUP 2 keys same slot: outer array has 2 streams", pass, fail);
     drain_xread_streams(fd, 2);
 
     /* ── XREADGROUP different slots → CROSSSLOT error ─────────────────── */
     /* tc:st:cross1 (slot 2743) and tc:st:cross2 (slot 15060); proxy rejects
      * before reaching the backend so groups need not exist on these streams. */
-    resp_send(fd, 9, "XREADGROUP", "GROUP", "g1", "c1",
-              "STREAMS", "tc:st:cross1", "tc:st:cross2", ">", ">");
+    resp_send(fd, 9, "XREADGROUP", "GROUP", "g1", "c1", "STREAMS", "tc:st:cross1", "tc:st:cross2", ">", ">");
     resp_next_str(fd, r, sizeof(r));
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "XREADGROUP different slots: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "XREADGROUP different slots: returns CROSSSLOT error", pass,
+          fail);
 
     /* ── XREAD BLOCK ──────────────────────────────────────────────────── */
     /*
@@ -379,23 +388,19 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 2, "DEL", "{xs}:empty");
 
     /* 1. Cross-slot → CROSSSLOT error */
-    resp_send(fd, 8, "XREAD", "BLOCK", "0",
-              "STREAMS", "tc:xs:bl:a", "tc:xs:bl:b", "0-0", "0-0");
+    resp_send(fd, 8, "XREAD", "BLOCK", "0", "STREAMS", "tc:xs:bl:a", "tc:xs:bl:b", "0-0", "0-0");
     resp_next_str(fd, r, sizeof(r));
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "XREAD BLOCK cross-slot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "XREAD BLOCK cross-slot: returns CROSSSLOT error", pass, fail);
 
     /* 2. Single key, existing data, BLOCK 0 → returns immediately */
     proxy_cmd(fd, r, sizeof(r), 5, "XADD", "{xs}:bl1", "*", "field", "value");
     resp_send(fd, 6, "XREAD", "BLOCK", "0", "STREAMS", "{xs}:bl1", "0-0");
     resp_next_str(fd, r, sizeof(r));
-    CHECK(strcmp(r, "*1") == 0,
-          "XREAD BLOCK 0 with data: outer array has 1 stream", pass, fail);
+    CHECK(strcmp(r, "*1") == 0, "XREAD BLOCK 0 with data: outer array has 1 stream", pass, fail);
     resp_next_str(fd, tmp, sizeof(tmp)); /* *2 stream-pair header */
     resp_next_str(fd, tmp, sizeof(tmp)); /* stream name           */
-    CHECK(strcmp(tmp, "{xs}:bl1") == 0,
-          "XREAD BLOCK 0 with data: returns correct stream name", pass, fail);
-    resp_next_str(fd, r, sizeof(r));     /* *N entries header     */
+    CHECK(strcmp(tmp, "{xs}:bl1") == 0, "XREAD BLOCK 0 with data: returns correct stream name", pass, fail);
+    resp_next_str(fd, r, sizeof(r)); /* *N entries header     */
     {
         int n = (r[0] == '*') ? atoi(r + 1) : 0;
         CHECK(n == 1, "XREAD BLOCK 0 with data: 1 entry returned", pass, fail);
@@ -405,8 +410,7 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     /* 3. Non-zero timeout, empty stream → *-1 after timeout */
     resp_send(fd, 6, "XREAD", "BLOCK", "1000", "STREAMS", "{xs}:empty", "0-0");
     resp_next_str(fd, r, sizeof(r));
-    CHECK(strcmp(r, "*-1") == 0,
-          "XREAD BLOCK timeout on empty stream: returns *-1", pass, fail);
+    CHECK(strcmp(r, "*-1") == 0, "XREAD BLOCK timeout on empty stream: returns *-1", pass, fail);
 
     /* ── XREADGROUP BLOCK ─────────────────────────────────────────────── */
     /*
@@ -421,25 +425,22 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 2, "DEL", "{xg}:bl1");
 
     /* 1. Cross-slot → CROSSSLOT error */
-    resp_send(fd, 11, "XREADGROUP", "GROUP", "grpbl", "c1", "BLOCK", "0",
-              "STREAMS", "tc:xg:bl:a", "tc:xg:bl:b", ">", ">");
+    resp_send(fd, 11, "XREADGROUP", "GROUP", "grpbl", "c1", "BLOCK", "0", "STREAMS", "tc:xg:bl:a", "tc:xg:bl:b", ">",
+              ">");
     resp_next_str(fd, r, sizeof(r));
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "XREADGROUP BLOCK cross-slot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "XREADGROUP BLOCK cross-slot: returns CROSSSLOT error", pass,
+          fail);
 
     /* 2. New message available, BLOCK 0 → returns immediately */
     proxy_cmd(fd, r, sizeof(r), 5, "XADD", "{xg}:bl1", "*", "f", "v1");
     proxy_cmd(fd, r, sizeof(r), 5, "XGROUP", "CREATE", "{xg}:bl1", "grpbl", "0");
-    resp_send(fd, 9, "XREADGROUP", "GROUP", "grpbl", "c1", "BLOCK", "0",
-              "STREAMS", "{xg}:bl1", ">");
+    resp_send(fd, 9, "XREADGROUP", "GROUP", "grpbl", "c1", "BLOCK", "0", "STREAMS", "{xg}:bl1", ">");
     resp_next_str(fd, r, sizeof(r));
-    CHECK(strcmp(r, "*1") == 0,
-          "XREADGROUP BLOCK 0 with data: outer array has 1 stream", pass, fail);
+    CHECK(strcmp(r, "*1") == 0, "XREADGROUP BLOCK 0 with data: outer array has 1 stream", pass, fail);
     resp_next_str(fd, tmp, sizeof(tmp)); /* *2 stream-pair header */
     resp_next_str(fd, tmp, sizeof(tmp)); /* stream name           */
-    CHECK(strcmp(tmp, "{xg}:bl1") == 0,
-          "XREADGROUP BLOCK 0 with data: returns correct stream name", pass, fail);
-    resp_next_str(fd, r, sizeof(r));     /* *N entries header     */
+    CHECK(strcmp(tmp, "{xg}:bl1") == 0, "XREADGROUP BLOCK 0 with data: returns correct stream name", pass, fail);
+    resp_next_str(fd, r, sizeof(r)); /* *N entries header     */
     {
         int n = (r[0] == '*') ? atoi(r + 1) : 0;
         CHECK(n == 1, "XREADGROUP BLOCK 0 with data: 1 entry returned", pass, fail);
@@ -448,11 +449,9 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
 
     /* 3. No new messages, non-zero timeout → *-1 after timeout */
     /* all entries already delivered to c1 above; no new entries exist */
-    resp_send(fd, 9, "XREADGROUP", "GROUP", "grpbl", "c1", "BLOCK", "1000",
-              "STREAMS", "{xg}:bl1", ">");
+    resp_send(fd, 9, "XREADGROUP", "GROUP", "grpbl", "c1", "BLOCK", "1000", "STREAMS", "{xg}:bl1", ">");
     resp_next_str(fd, r, sizeof(r));
-    CHECK(strcmp(r, "*-1") == 0,
-          "XREADGROUP BLOCK timeout on no-new-messages: returns *-1", pass, fail);
+    CHECK(strcmp(r, "*-1") == 0, "XREADGROUP BLOCK timeout on no-new-messages: returns *-1", pass, fail);
 
     close(fd);
 }

@@ -3,18 +3,20 @@
 
 typedef struct {
     fd_set rfds, wfds;
-    int    maxfd;
+    int maxfd;
 } SelectState;
 
 static int el_api_create(EventLoop *el) {
     SelectState *s = calloc(1, sizeof(*s));
     if (!s) return -1;
-    s->maxfd  = -1;
+    s->maxfd = -1;
     el->state = s;
     return 0;
 }
 
-static void el_api_free(EventLoop *el) { free(el->state); }
+static void el_api_free(EventLoop *el) {
+    free(el->state);
+}
 
 static int el_api_add(EventLoop *el, int fd, int mask) {
     SelectState *s = el->state;
@@ -36,7 +38,7 @@ static int el_api_poll(EventLoop *el, int timeout_ms) {
     fd_set rfds = s->rfds, wfds = s->wfds;
     struct timeval tv, *tvp = NULL;
     if (timeout_ms >= 0) {
-        tv.tv_sec  = timeout_ms / 1000;
+        tv.tv_sec = timeout_ms / 1000;
         tv.tv_usec = (timeout_ms % 1000) * 1000;
         tvp = &tv;
     }
@@ -48,7 +50,7 @@ static int el_api_poll(EventLoop *el, int timeout_ms) {
         if (FD_ISSET(fd, &rfds)) mask |= EL_READABLE;
         if (FD_ISSET(fd, &wfds)) mask |= EL_WRITABLE;
         if (mask) {
-            el->fired[nfired].fd   = fd;
+            el->fired[nfired].fd = fd;
             el->fired[nfired].mask = mask;
             nfired++;
         }
@@ -56,4 +58,6 @@ static int el_api_poll(EventLoop *el, int timeout_ms) {
     return nfired;
 }
 
-static const char *el_api_name(void) { return "select"; }
+static const char *el_api_name(void) {
+    return "select";
+}

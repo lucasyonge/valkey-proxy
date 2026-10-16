@@ -5,14 +5,13 @@
 
 /* Select the platform backend at compile time. */
 #if defined(__linux__)
-  #include "el_epoll.c"
-#elif defined(__APPLE__) || defined(__FreeBSD__) || \
-      defined(__OpenBSD__) || defined(__NetBSD__)
-  #include "el_kqueue.c"
+#include "el_epoll.c"
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#include "el_kqueue.c"
 #elif defined(__sun)
-  #include "el_evport.c"
+#include "el_evport.c"
 #else
-  #include "el_select.c"
+#include "el_select.c"
 #endif
 
 EventLoop *el_create(int max_events) {

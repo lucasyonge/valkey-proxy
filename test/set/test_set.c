@@ -46,9 +46,12 @@ void run_set_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, "*3") == 0, "SMISMEMBER: returns *3 array", pass, fail);
     {
         char v[64];
-        resp_next_str(fd, v, sizeof(v)); CHECK(strcmp(v, ":1") == 0, "SMISMEMBER: m1 present → 1", pass, fail);
-        resp_next_str(fd, v, sizeof(v)); CHECK(strcmp(v, ":0") == 0, "SMISMEMBER: nothere absent → 0", pass, fail);
-        resp_next_str(fd, v, sizeof(v)); CHECK(strcmp(v, ":1") == 0, "SMISMEMBER: m2 present → 1", pass, fail);
+        resp_next_str(fd, v, sizeof(v));
+        CHECK(strcmp(v, ":1") == 0, "SMISMEMBER: m1 present → 1", pass, fail);
+        resp_next_str(fd, v, sizeof(v));
+        CHECK(strcmp(v, ":0") == 0, "SMISMEMBER: nothere absent → 0", pass, fail);
+        resp_next_str(fd, v, sizeof(v));
+        CHECK(strcmp(v, ":1") == 0, "SMISMEMBER: m2 present → 1", pass, fail);
     }
 
     /* ── SMEMBERS ─────────────────────────────────────────────────────── */
@@ -90,9 +93,9 @@ void run_set_tests(const char *host, int port, int *pass, int *fail) {
 
     resp_send(fd, 3, "SPOP", "{tc:set}:pop", "2");
     resp_next_str(fd, r, sizeof(r));
-    CHECK(r[0] == '*' && atoi(r+1) == 2, "SPOP count=2: returns *2 array", pass, fail);
+    CHECK(r[0] == '*' && atoi(r + 1) == 2, "SPOP count=2: returns *2 array", pass, fail);
     {
-        int cnt = (r[0] == '*') ? atoi(r+1) : 0;
+        int cnt = (r[0] == '*') ? atoi(r + 1) : 0;
         char v[64];
         for (int i = 0; i < cnt; i++) resp_next_str(fd, v, sizeof(v));
     }
@@ -105,9 +108,9 @@ void run_set_tests(const char *host, int port, int *pass, int *fail) {
 
     resp_send(fd, 3, "SRANDMEMBER", "{tc:set}:rand", "2");
     resp_next_str(fd, r, sizeof(r));
-    CHECK(r[0] == '*' && atoi(r+1) == 2, "SRANDMEMBER count=2: returns *2 array", pass, fail);
+    CHECK(r[0] == '*' && atoi(r + 1) == 2, "SRANDMEMBER count=2: returns *2 array", pass, fail);
     {
-        int cnt = (r[0] == '*') ? atoi(r+1) : 0;
+        int cnt = (r[0] == '*') ? atoi(r + 1) : 0;
         char v[64];
         for (int i = 0; i < cnt; i++) resp_next_str(fd, v, sizeof(v));
     }
@@ -215,36 +218,28 @@ void run_set_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 3, "SADD", "tc_cs_y", "y1");
 
     proxy_cmd(fd, r, sizeof(r), 3, "SDIFF", "tc_cs_x", "tc_cs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "SDIFF crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "SDIFF crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 4, "SDIFFSTORE", "tc_cs_z", "tc_cs_x", "tc_cs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "SDIFFSTORE crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "SDIFFSTORE crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 3, "SINTER", "tc_cs_x", "tc_cs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "SINTER crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "SINTER crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 4, "SINTERCARD", "2", "tc_cs_x", "tc_cs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "SINTERCARD crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "SINTERCARD crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 4, "SINTERSTORE", "tc_cs_z", "tc_cs_x", "tc_cs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "SINTERSTORE crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "SINTERSTORE crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 4, "SMOVE", "tc_cs_x", "tc_cs_y", "x1");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "SMOVE crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "SMOVE crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 3, "SUNION", "tc_cs_x", "tc_cs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "SUNION crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "SUNION crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 4, "SUNIONSTORE", "tc_cs_z", "tc_cs_x", "tc_cs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "SUNIONSTORE crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "SUNIONSTORE crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 1, "FLUSHDB");
     close(fd);

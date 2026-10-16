@@ -7,8 +7,7 @@ static void drain_lmpop(int fd) {
     resp_next_str(fd, tmp, sizeof(tmp)); /* key name (bulk string) */
     resp_next_str(fd, tmp, sizeof(tmp)); /* *N values-array header  */
     int n = (tmp[0] == '*') ? atoi(tmp + 1) : 0;
-    for (int i = 0; i < n; i++)
-        resp_next_str(fd, tmp, sizeof(tmp));
+    for (int i = 0; i < n; i++) resp_next_str(fd, tmp, sizeof(tmp));
 }
 
 void run_list_tests(const char *host, int port, int *pass, int *fail) {
@@ -50,8 +49,7 @@ void run_list_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 4, "LRANGE", "tc:list:a", "0", "-1");
     {
         int cnt = (r[0] == '*') ? atoi(r + 1) : 0;
-        CHECK(r[0] == '*' && cnt == 5,
-              "LRANGE 0 -1: returns 5-element array", pass, fail);
+        CHECK(r[0] == '*' && cnt == 5, "LRANGE 0 -1: returns 5-element array", pass, fail);
         int found = resp_array_contains(fd, cnt, "v");
         CHECK(found, "LRANGE 0 -1: contains head element 'v'", pass, fail);
     }
@@ -59,8 +57,7 @@ void run_list_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 4, "LRANGE", "tc:list:a", "0", "1");
     {
         int cnt = (r[0] == '*') ? atoi(r + 1) : 0;
-        CHECK(r[0] == '*' && cnt == 2,
-              "LRANGE 0 1: returns 2-element array", pass, fail);
+        CHECK(r[0] == '*' && cnt == 2, "LRANGE 0 1: returns 2-element array", pass, fail);
         int found = resp_array_contains(fd, cnt, "v");
         CHECK(found, "LRANGE 0 1: contains head element 'v'", pass, fail);
     }
@@ -139,8 +136,7 @@ void run_list_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 3, "LPOP", "tc:list:a", "2");
     {
         int cnt = (r[0] == '*') ? atoi(r + 1) : 0;
-        CHECK(r[0] == '*' && cnt == 2,
-              "LPOP count: returns 2-element array", pass, fail);
+        CHECK(r[0] == '*' && cnt == 2, "LPOP count: returns 2-element array", pass, fail);
         /* drain elements before next command */
         for (int i = 0; i < cnt; i++) resp_next_str(fd, tmp, sizeof(tmp));
     }
@@ -181,8 +177,7 @@ void run_list_tests(const char *host, int port, int *pass, int *fail) {
 
     /* LMOVE cross-slot → CROSSSLOT error */
     proxy_cmd(fd, r, sizeof(r), 5, "LMOVE", "{a}:lst", "{b}:lst", "LEFT", "RIGHT");
-    CHECK(strstr(r, "CROSSSLOT") != NULL,
-          "LMOVE cross-slot: returns CROSSSLOT error", pass, fail);
+    CHECK(strstr(r, "CROSSSLOT") != NULL, "LMOVE cross-slot: returns CROSSSLOT error", pass, fail);
 
     /* ── RPOPLPUSH (multi-key, same slot) ────────────────────────────────── */
 
@@ -199,8 +194,7 @@ void run_list_tests(const char *host, int port, int *pass, int *fail) {
 
     /* RPOPLPUSH cross-slot → CROSSSLOT error */
     proxy_cmd(fd, r, sizeof(r), 3, "RPOPLPUSH", "{a}:lst", "{b}:lst");
-    CHECK(strstr(r, "CROSSSLOT") != NULL,
-          "RPOPLPUSH cross-slot: returns CROSSSLOT error", pass, fail);
+    CHECK(strstr(r, "CROSSSLOT") != NULL, "RPOPLPUSH cross-slot: returns CROSSSLOT error", pass, fail);
 
     /* ── LMPOP (multi-key, same slot) ────────────────────────────────────── */
 
@@ -209,8 +203,7 @@ void run_list_tests(const char *host, int port, int *pass, int *fail) {
 
     /* LMPOP 1 key LEFT → *2 [key, [p1]] */
     proxy_cmd(fd, r, sizeof(r), 4, "LMPOP", "1", "{mp}:a", "LEFT");
-    CHECK(r[0] == '*' && atoi(r + 1) == 2,
-          "LMPOP 1 key LEFT: returns *2 [key, [elements]]", pass, fail);
+    CHECK(r[0] == '*' && atoi(r + 1) == 2, "LMPOP 1 key LEFT: returns *2 [key, [elements]]", pass, fail);
     if (r[0] == '*' && atoi(r + 1) == 2) drain_lmpop(fd);
 
     proxy_cmd(fd, r, sizeof(r), 2, "LLEN", "{mp}:a");
@@ -218,19 +211,16 @@ void run_list_tests(const char *host, int port, int *pass, int *fail) {
 
     /* LMPOP 2 keys LEFT COUNT 2 */
     proxy_cmd(fd, r, sizeof(r), 7, "LMPOP", "2", "{mp}:a", "{mp}:b", "LEFT", "COUNT", "2");
-    CHECK(r[0] == '*' && atoi(r + 1) == 2,
-          "LMPOP 2 keys COUNT 2: returns *2 array response", pass, fail);
+    CHECK(r[0] == '*' && atoi(r + 1) == 2, "LMPOP 2 keys COUNT 2: returns *2 array response", pass, fail);
     if (r[0] == '*' && atoi(r + 1) == 2) drain_lmpop(fd);
 
     /* LMPOP on empty/non-existent keys → *-1 (null array) */
     proxy_cmd(fd, r, sizeof(r), 4, "LMPOP", "1", "{mp}:noexist", "LEFT");
-    CHECK(strcmp(r, "*-1") == 0,
-          "LMPOP: empty keylist returns null array", pass, fail);
+    CHECK(strcmp(r, "*-1") == 0, "LMPOP: empty keylist returns null array", pass, fail);
 
     /* LMPOP cross-slot → CROSSSLOT error */
     proxy_cmd(fd, r, sizeof(r), 5, "LMPOP", "2", "{a}:lst", "{b}:lst", "LEFT");
-    CHECK(strstr(r, "CROSSSLOT") != NULL,
-          "LMPOP cross-slot: returns CROSSSLOT error", pass, fail);
+    CHECK(strstr(r, "CROSSSLOT") != NULL, "LMPOP cross-slot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 1, "FLUSHDB");
     close(fd);

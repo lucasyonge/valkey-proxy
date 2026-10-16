@@ -2,15 +2,26 @@
 #include <time.h>
 #include <limits.h>
 
-typedef struct { int ok; const char *label; } _GnRes;
+typedef struct {
+    int ok;
+    const char *label;
+} _GnRes;
 #define _GN_MAX 200
 
 #undef CHECK
-#define CHECK(cond, _lbl, pass, fail) do { \
-    int _ok = !!(cond); \
-    if (_ok) (*(pass))++; else (*(fail))++; \
-    if (_ntr < _GN_MAX) { _tr[_ntr].ok = _ok; _tr[_ntr].label = (_lbl); _ntr++; } \
-} while(0)
+#define CHECK(cond, _lbl, pass, fail) \
+    do {                              \
+        int _ok = !!(cond);           \
+        if (_ok)                      \
+            (*(pass))++;              \
+        else                          \
+            (*(fail))++;              \
+        if (_ntr < _GN_MAX) {         \
+            _tr[_ntr].ok = _ok;       \
+            _tr[_ntr].label = (_lbl); \
+            _ntr++;                   \
+        }                             \
+    } while (0)
 
 /* Read one SLOWLOG GET entry [id, timestamp, duration, args, addr, name].
  * Stores the timestamp in *ts. Returns 1 if one of the args equals key,
@@ -21,19 +32,19 @@ static int read_slowlog_entry(int fd, long long *ts, const char *key) {
     if (t[0] != '*') return -1;
     int nel = atoi(t + 1);
     if (nel < 4) return -1;
-    resp_next_str(fd, t, sizeof(t));                    /* id */
-    resp_next_str(fd, t, sizeof(t));                    /* timestamp */
+    resp_next_str(fd, t, sizeof(t)); /* id */
+    resp_next_str(fd, t, sizeof(t)); /* timestamp */
     if (t[0] != ':') return -1;
     *ts = atoll(t + 1);
-    resp_next_str(fd, t, sizeof(t));                    /* duration */
-    resp_next_str(fd, t, sizeof(t));                    /* args header */
+    resp_next_str(fd, t, sizeof(t)); /* duration */
+    resp_next_str(fd, t, sizeof(t)); /* args header */
     if (t[0] != '*') return -1;
     int nargs = atoi(t + 1), found = 0;
     for (int i = 0; i < nargs; i++) {
         resp_next_str(fd, t, sizeof(t));
         if (strcmp(t, key) == 0) found = 1;
     }
-    for (int i = 4; i < nel; i++) resp_skip_reply(fd);  /* addr, name */
+    for (int i = 4; i < nel; i++) resp_skip_reply(fd); /* addr, name */
     return found;
 }
 
@@ -41,17 +52,22 @@ static int read_slowlog_entry(int fd, long long *ts, const char *key) {
  * whole command at 128KB). Returns the reply's first token in out. */
 static char *send_big_set(int fd, const char *key, size_t len, char *out, int outsz) {
     char hdr[256], chunk[65536];
-    int hl = snprintf(hdr, sizeof(hdr), "*3\r\n$3\r\nSET\r\n$%d\r\n%s\r\n$%zu\r\n",
-                      (int)strlen(key), key, len);
+    int hl = snprintf(hdr, sizeof(hdr), "*3\r\n$3\r\nSET\r\n$%d\r\n%s\r\n$%zu\r\n", (int)strlen(key), key, len);
     memset(chunk, 'x', sizeof(chunk));
     int ok = write(fd, hdr, (size_t)hl) == hl;
-    for (size_t rem = len; ok && rem > 0; ) {
+    for (size_t rem = len; ok && rem > 0;) {
         size_t c = rem < sizeof(chunk) ? rem : sizeof(chunk);
         ssize_t n = write(fd, chunk, c);
-        if (n <= 0) ok = 0; else rem -= (size_t)n;
+        if (n <= 0)
+            ok = 0;
+        else
+            rem -= (size_t)n;
     }
     if (ok) ok = write(fd, "\r\n", 2) == 2;
-    if (!ok) { snprintf(out, outsz, "(send-error)"); return NULL; }
+    if (!ok) {
+        snprintf(out, outsz, "(send-error)");
+        return NULL;
+    }
     return resp_next_str(fd, out, outsz);
 }
 
@@ -269,8 +285,7 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
      */
     proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:cs:foo", "v1");
     proxy_cmd(fd, r, sizeof(r), 3, "RENAME", "tc:cs:foo", "tc:cs:bar");
-    CHECK(strncmp(r, "-CROSSSLOT", 10) == 0,
-          "RENAME: cross-slot returns CROSSSLOT error", pass, fail);
+    CHECK(strncmp(r, "-CROSSSLOT", 10) == 0, "RENAME: cross-slot returns CROSSSLOT error", pass, fail);
 
     /* ── RENAMENX (same slot) ────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 2, "DEL", "{tc:gn:rnx}src");
@@ -286,8 +301,7 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
     /* ── RENAMENX (cross-slot, should return CROSSSLOT error) ────────── */
     proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:cs:foo", "v1");
     proxy_cmd(fd, r, sizeof(r), 3, "RENAMENX", "tc:cs:foo", "tc:cs:bar");
-    CHECK(strncmp(r, "-CROSSSLOT", 10) == 0,
-          "RENAMENX: cross-slot returns CROSSSLOT error", pass, fail);
+    CHECK(strncmp(r, "-CROSSSLOT", 10) == 0, "RENAMENX: cross-slot returns CROSSSLOT error", pass, fail);
 
     /* ── COPY (same slot) ────────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 2, "DEL", "{tc:gn:cp}src");
@@ -302,8 +316,7 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:cs:foo", "v1");
     proxy_cmd(fd, r, sizeof(r), 2, "DEL", "tc:cs:bar");
     proxy_cmd(fd, r, sizeof(r), 3, "COPY", "tc:cs:foo", "tc:cs:bar");
-    CHECK(strncmp(r, "-CROSSSLOT", 10) == 0,
-          "COPY: cross-slot returns CROSSSLOT error", pass, fail);
+    CHECK(strncmp(r, "-CROSSSLOT", 10) == 0, "COPY: cross-slot returns CROSSSLOT error", pass, fail);
 
     /* ── DUMP / RESTORE ──────────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 2, "DEL", "tc:gn:dump:src");
@@ -318,14 +331,13 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
 
         if (dump_len > 0) {
             const char *args[] = {"RESTORE", "tc:gn:dump:dst", "0", dump_buf};
-            int lens[]         = {7, 14, 1, dump_len};
+            int lens[] = {7, 14, 1, dump_len};
             resp_send_raw(fd, 4, args, lens);
             resp_next_str(fd, r, sizeof(r));
             CHECK(strcmp(r, "+OK") == 0, "RESTORE: restores key successfully", pass, fail);
 
             proxy_cmd(fd, r, sizeof(r), 2, "GET", "tc:gn:dump:dst");
-            CHECK(strcmp(r, "hello_restore") == 0,
-                  "RESTORE: GET after restore returns original value", pass, fail);
+            CHECK(strcmp(r, "hello_restore") == 0, "RESTORE: GET after restore returns original value", pass, fail);
         }
     }
 
@@ -343,15 +355,16 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
 
     /* FREQ requires LFU maxmemory-policy; Valkey returns -ERR if not configured */
     proxy_cmd(fd, r, sizeof(r), 3, "OBJECT", "FREQ", "tc:gn:obj");
-    CHECK(r[0] == ':' || r[0] == '-',
-          "OBJECT FREQ: proxy routes correctly (integer or Valkey error)", pass, fail);
+    CHECK(r[0] == ':' || r[0] == '-', "OBJECT FREQ: proxy routes correctly (integer or Valkey error)", pass, fail);
 
     /* OBJECT HELP has no key — routed to first master */
     resp_send(fd, 2, "OBJECT", "HELP");
-    resp_next_str(fd, r, sizeof(r));   /* *N header */
-    CHECK(r[0] == '*' && atoi(r + 1) > 0,
-          "OBJECT HELP: returns non-empty help array", pass, fail);
-    { int n = atoi(r + 1); for (int i = 0; i < n; i++) resp_next_str(fd, r, sizeof(r)); }
+    resp_next_str(fd, r, sizeof(r)); /* *N header */
+    CHECK(r[0] == '*' && atoi(r + 1) > 0, "OBJECT HELP: returns non-empty help array", pass, fail);
+    {
+        int n = atoi(r + 1);
+        for (int i = 0; i < n; i++) resp_next_str(fd, r, sizeof(r));
+    }
 
     /* ── MEMORY USAGE ────────────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 3, "MEMORY", "USAGE", "tc:gn:obj");
@@ -435,9 +448,9 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
         char scan_cursor[512] = "0";
         do {
             resp_send(fd, 6, "SCAN", scan_cursor, "MATCH", "tc:gn:scan:*", "COUNT", "100");
-            resp_next_str(fd, r, sizeof(r));                       /* *2 */
-            resp_next_str(fd, scan_cursor, sizeof(scan_cursor));   /* cursor */
-            resp_next_str(fd, r, sizeof(r));                       /* *N */
+            resp_next_str(fd, r, sizeof(r));                     /* *2 */
+            resp_next_str(fd, scan_cursor, sizeof(scan_cursor)); /* cursor */
+            resp_next_str(fd, r, sizeof(r));                     /* *N */
             int n = atoi(r + 1);
             for (int i = 0; i < n; i++) {
                 resp_next_str(fd, r, sizeof(r));
@@ -456,10 +469,10 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
 
     /* ── KEYS ────────────────────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:gn:keys:alpha", "1");
-    proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:gn:keys:beta",  "2");
+    proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:gn:keys:beta", "2");
 
     resp_send(fd, 2, "KEYS", "tc:gn:keys:*");
-    resp_next_str(fd, r, sizeof(r));   /* "*N" header */
+    resp_next_str(fd, r, sizeof(r)); /* "*N" header */
     {
         int n = atoi(r + 1);
         int has_alpha = resp_array_contains(fd, n, "tc:gn:keys:alpha");
@@ -479,8 +492,8 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
      * tc:gn:keys:nd0  → slot 1523  (Node 0: slots 0–5460)
      * tc:gn:keys:nd1  → slot 5586  (Node 1: slots 5461–10922)
      * tc:gn:keys:nd2x → slot 11216 (Node 2: slots 10923–16383) */
-    proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:gn:keys:nd0",  "v0");
-    proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:gn:keys:nd1",  "v1");
+    proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:gn:keys:nd0", "v0");
+    proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:gn:keys:nd1", "v1");
     proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:gn:keys:nd2x", "v2");
 
     resp_send(fd, 2, "KEYS", "tc:gn:keys:nd*");
@@ -510,10 +523,12 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
     /* ── SLOWLOG ─────────────────────────────────────────────────────── */
     /* SLOWLOG HELP has no key — routed to a single master node */
     resp_send(fd, 2, "SLOWLOG", "HELP");
-    resp_next_str(fd, r, sizeof(r));   /* *N header */
-    CHECK(r[0] == '*' && atoi(r + 1) > 0,
-          "SLOWLOG HELP: returns non-empty help array", pass, fail);
-    { int n = atoi(r + 1); for (int i = 0; i < n; i++) resp_next_str(fd, r, sizeof(r)); }
+    resp_next_str(fd, r, sizeof(r)); /* *N header */
+    CHECK(r[0] == '*' && atoi(r + 1) > 0, "SLOWLOG HELP: returns non-empty help array", pass, fail);
+    {
+        int n = atoi(r + 1);
+        for (int i = 0; i < n; i++) resp_next_str(fd, r, sizeof(r));
+    }
 
     /* SLOWLOG RESET fans out to all master nodes, replies +OK */
     proxy_cmd(fd, r, sizeof(r), 2, "SLOWLOG", "RESET");
@@ -548,14 +563,13 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
      * entry on the node owning its key. Node 0 → Node 1 → Node 2, >1s apart
      * so the (second-resolution) timestamps are strictly increasing. */
     {
-        const char *busy =
-            "local s=os.clock() repeat until os.clock()-s >= 0.02 return 1";
+        const char *busy = "local s=os.clock() repeat until os.clock()-s >= 0.02 return 1";
         proxy_cmd(fd, r, sizeof(r), 2, "SLOWLOG", "RESET");
-        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k1");  /* Node 0 */
+        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k1"); /* Node 0 */
         usleep(1100000);
-        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k3");  /* Node 1 */
+        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k3"); /* Node 1 */
         usleep(1100000);
-        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k2");  /* Node 2 */
+        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k2"); /* Node 2 */
 
         proxy_cmd(fd, r, sizeof(r), 2, "SLOWLOG", "LEN");
         long long len = atoll(r + 1);
@@ -579,13 +593,12 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
         CHECK(n == 2, "SLOWLOG GET 2: truncated to 2 entries", pass, fail);
         int first = 0, second = 0;
         if (n == 2) {
-            first  = read_slowlog_entry(fd, &ts, "tc:gn:touch:k2");
+            first = read_slowlog_entry(fd, &ts, "tc:gn:touch:k2");
             second = read_slowlog_entry(fd, &ts, "tc:gn:touch:k3");
         } else {
             for (int i = 0; i < n; i++) resp_skip_reply(fd);
         }
-        CHECK(first == 1 && second == 1,
-              "SLOWLOG GET 2: newest entries are Node 2's then Node 1's EVAL", pass, fail);
+        CHECK(first == 1 && second == 1, "SLOWLOG GET 2: newest entries are Node 2's then Node 1's EVAL", pass, fail);
 
         proxy_cmd(fd, r, sizeof(r), 3, "SLOWLOG", "GET", "0");
         CHECK(strcmp(r, "*0") == 0, "SLOWLOG GET 0: returns empty array", pass, fail);
@@ -596,10 +609,12 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
     /* ── COMMANDLOG ──────────────────────────────────────────────────── */
     /* COMMANDLOG HELP has no key — routed to a single master node */
     resp_send(fd, 2, "COMMANDLOG", "HELP");
-    resp_next_str(fd, r, sizeof(r));   /* *N header */
-    CHECK(r[0] == '*' && atoi(r + 1) > 0,
-          "COMMANDLOG HELP: returns non-empty help array", pass, fail);
-    { int n = atoi(r + 1); for (int i = 0; i < n; i++) resp_next_str(fd, r, sizeof(r)); }
+    resp_next_str(fd, r, sizeof(r)); /* *N header */
+    CHECK(r[0] == '*' && atoi(r + 1) > 0, "COMMANDLOG HELP: returns non-empty help array", pass, fail);
+    {
+        int n = atoi(r + 1);
+        for (int i = 0; i < n; i++) resp_next_str(fd, r, sizeof(r));
+    }
 
     /* COMMANDLOG RESET/LEN take a required type argument: slow, large-request,
      * large-reply. Each fans out to all master nodes. */
@@ -625,14 +640,13 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
     /* COMMANDLOG GET <count> slow — same busy-loop EVALs as the SLOWLOG GET
      * test: Node 0 → Node 1 → Node 2, >1s apart, merged newest first. */
     {
-        const char *busy =
-            "local s=os.clock() repeat until os.clock()-s >= 0.02 return 1";
+        const char *busy = "local s=os.clock() repeat until os.clock()-s >= 0.02 return 1";
         proxy_cmd(fd, r, sizeof(r), 3, "COMMANDLOG", "RESET", "slow");
-        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k1");  /* Node 0 */
+        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k1"); /* Node 0 */
         usleep(1100000);
-        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k3");  /* Node 1 */
+        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k3"); /* Node 1 */
         usleep(1100000);
-        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k2");  /* Node 2 */
+        proxy_cmd(fd, r, sizeof(r), 4, "EVAL", busy, "1", "tc:gn:touch:k2"); /* Node 2 */
 
         proxy_cmd(fd, r, sizeof(r), 3, "COMMANDLOG", "LEN", "slow");
         long long len = atoll(r + 1);
@@ -654,13 +668,13 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
         CHECK(n == 2, "COMMANDLOG GET 2 slow: truncated to 2 entries", pass, fail);
         int first = 0, second = 0;
         if (n == 2) {
-            first  = read_slowlog_entry(fd, &ts, "tc:gn:touch:k2");
+            first = read_slowlog_entry(fd, &ts, "tc:gn:touch:k2");
             second = read_slowlog_entry(fd, &ts, "tc:gn:touch:k3");
         } else {
             for (int i = 0; i < n; i++) resp_skip_reply(fd);
         }
-        CHECK(first == 1 && second == 1,
-              "COMMANDLOG GET 2 slow: newest entries are Node 2's then Node 1's EVAL", pass, fail);
+        CHECK(first == 1 && second == 1, "COMMANDLOG GET 2 slow: newest entries are Node 2's then Node 1's EVAL", pass,
+              fail);
 
         proxy_cmd(fd, r, sizeof(r), 4, "COMMANDLOG", "GET", "0", "slow");
         CHECK(strcmp(r, "*0") == 0, "COMMANDLOG GET 0 slow: returns empty array", pass, fail);
@@ -674,7 +688,7 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
         proxy_cmd(fd, r, sizeof(r), 3, "COMMANDLOG", "RESET", "large-reply");
         send_big_set(fd, "tc:gn:cl:big0", big_len, r, sizeof(r));
         send_big_set(fd, "tc:gn:cl:big1", big_len, r, sizeof(r));
-        proxy_cmd(fd, r, sizeof(r), 2, "GET", "tc:gn:cl:big0");   /* 2MB reply, overflow discarded */
+        proxy_cmd(fd, r, sizeof(r), 2, "GET", "tc:gn:cl:big0"); /* 2MB reply, overflow discarded */
         proxy_cmd(fd, r, sizeof(r), 2, "GET", "tc:gn:cl:big1");
 
         proxy_cmd(fd, r, sizeof(r), 3, "COMMANDLOG", "LEN", "large-request");
@@ -711,15 +725,14 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
 
     {
         const char *types[] = {"slow", "large-request", "large-reply"};
-        for (int i = 0; i < 3; i++)
-            proxy_cmd(fd, r, sizeof(r), 3, "COMMANDLOG", "RESET", types[i]);
+        for (int i = 0; i < 3; i++) proxy_cmd(fd, r, sizeof(r), 3, "COMMANDLOG", "RESET", types[i]);
     }
 
     /* ── TIME ────────────────────────────────────────────────────────── */
     /* TIME is answered directly by the proxy without contacting a backend
      * node; it returns a 2-element array: unix seconds and microseconds */
     resp_send(fd, 1, "TIME");
-    resp_next_str(fd, r, sizeof(r));   /* *2 header */
+    resp_next_str(fd, r, sizeof(r)); /* *2 header */
     CHECK(strcmp(r, "*2") == 0, "TIME: returns a 2-element array", pass, fail);
     {
         char sec[64], usec[64];
@@ -772,23 +785,29 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
     /* MODULE LIST has no key — routed to a single arbitrary master node,
      * the raw backend reply is relayed back to the client unchanged */
     resp_send(fd, 2, "MODULE", "LIST");
-    resp_next_str(fd, r, sizeof(r));   /* *N header */
+    resp_next_str(fd, r, sizeof(r)); /* *N header */
     CHECK(r[0] == '*', "MODULE LIST: returns an array reply", pass, fail);
-    { int n = atoi(r + 1); for (int i = 0; i < n; i++) resp_skip_reply(fd); }
+    {
+        int n = atoi(r + 1);
+        for (int i = 0; i < n; i++) resp_skip_reply(fd);
+    }
 
     /* ── COMMAND HELP ────────────────────────────────────────────────── */
     /* COMMAND HELP has no key — routed to a single arbitrary master node,
      * the raw backend reply is relayed back to the client unchanged */
     resp_send(fd, 2, "COMMAND", "HELP");
-    resp_next_str(fd, r, sizeof(r));   /* *N header */
+    resp_next_str(fd, r, sizeof(r)); /* *N header */
     CHECK(r[0] == '*', "COMMAND HELP: returns an array reply", pass, fail);
-    { int n = atoi(r + 1); for (int i = 0; i < n; i++) resp_skip_reply(fd); }
+    {
+        int n = atoi(r + 1);
+        for (int i = 0; i < n; i++) resp_skip_reply(fd);
+    }
 
     /* ── COMMAND GETKEYS ─────────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:gn:cmdgetkeys", "val");
 
     resp_send(fd, 4, "COMMAND", "GETKEYS", "GET", "tc:gn:cmdgetkeys");
-    resp_next_str(fd, r, sizeof(r));   /* *N header */
+    resp_next_str(fd, r, sizeof(r)); /* *N header */
     CHECK(r[0] == '*', "COMMAND GETKEYS GET key: returns an array reply", pass, fail);
     if (r[0] == '*') {
         int n = atoi(r + 1);
@@ -802,9 +821,12 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
 
     /* ── COMMAND GETKEYSANDFLAGS ─────────────────────────────────────── */
     resp_send(fd, 4, "COMMAND", "GETKEYSANDFLAGS", "GET", "tc:gn:cmdgetkeys");
-    resp_next_str(fd, r, sizeof(r));   /* *N header */
+    resp_next_str(fd, r, sizeof(r)); /* *N header */
     CHECK(r[0] == '*', "COMMAND GETKEYSANDFLAGS GET key: returns an array reply", pass, fail);
-    { int n = atoi(r + 1); for (int i = 0; i < n; i++) resp_skip_reply(fd); }
+    {
+        int n = atoi(r + 1);
+        for (int i = 0; i < n; i++) resp_skip_reply(fd);
+    }
 
     resp_send(fd, 3, "COMMAND", "GETKEYSANDFLAGS", "NOTACOMMAND");
     resp_next_str(fd, r, sizeof(r));
@@ -814,32 +836,32 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
     /* forwarded to a single arbitrary master node, but the reply is
      * post-processed so it only reflects commands this proxy supports */
     resp_send(fd, 3, "COMMAND", "INFO", "GET");
-    resp_next_str(fd, r, sizeof(r));   /* *1 */
+    resp_next_str(fd, r, sizeof(r)); /* *1 */
     CHECK(strcmp(r, "*1") == 0, "COMMAND INFO GET: returns a single-element array", pass, fail);
-    resp_next_str(fd, r, sizeof(r));   /* *N: GET's info sub-array header */
+    resp_next_str(fd, r, sizeof(r)); /* *N: GET's info sub-array header */
     CHECK(r[0] == '*', "COMMAND INFO GET: element is an array", pass, fail);
     if (r[0] == '*') {
         int sub_n = atoi(r + 1);
-        resp_next_str(fd, r, sizeof(r));   /* name field */
+        resp_next_str(fd, r, sizeof(r)); /* name field */
         CHECK(strcmp(r, "get") == 0, "COMMAND INFO GET: name field is 'get'", pass, fail);
         for (int i = 1; i < sub_n; i++) resp_skip_reply(fd);
     }
 
     resp_send(fd, 4, "COMMAND", "INFO", "GET", "NOTACOMMAND");
-    resp_next_str(fd, r, sizeof(r));   /* *2 */
+    resp_next_str(fd, r, sizeof(r)); /* *2 */
     CHECK(strcmp(r, "*2") == 0, "COMMAND INFO GET NOTACOMMAND: returns a two-element array", pass, fail);
-    resp_skip_reply(fd);               /* GET's real info array */
-    resp_next_str(fd, r, sizeof(r));   /* *-1 for the unsupported name */
+    resp_skip_reply(fd);             /* GET's real info array */
+    resp_next_str(fd, r, sizeof(r)); /* *-1 for the unsupported name */
     CHECK(strcmp(r, "*-1") == 0, "COMMAND INFO GET NOTACOMMAND: unsupported name is nil", pass, fail);
 
     resp_send(fd, 3, "COMMAND", "INFO", "NOTACOMMAND");
-    resp_next_str(fd, r, sizeof(r));   /* *1 */
+    resp_next_str(fd, r, sizeof(r)); /* *1 */
     CHECK(strcmp(r, "*1") == 0, "COMMAND INFO NOTACOMMAND: returns a single-element array", pass, fail);
-    resp_next_str(fd, r, sizeof(r));   /* *-1 */
+    resp_next_str(fd, r, sizeof(r)); /* *-1 */
     CHECK(strcmp(r, "*-1") == 0, "COMMAND INFO NOTACOMMAND: element is nil", pass, fail);
 
     resp_send(fd, 2, "COMMAND", "INFO");
-    resp_next_str(fd, r, sizeof(r));   /* *N: filtered down to proxy-supported commands */
+    resp_next_str(fd, r, sizeof(r)); /* *N: filtered down to proxy-supported commands */
     CHECK(r[0] == '*', "COMMAND INFO (no args): returns an array reply", pass, fail);
     if (r[0] == '*') {
         int n = atoi(r + 1);
@@ -853,24 +875,25 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
      * nil, so the proxy filters (name, docs) pairs down to what it
      * supports for both the with-args and no-args forms. */
     resp_send(fd, 3, "COMMAND", "DOCS", "GET");
-    resp_next_str(fd, r, sizeof(r));   /* *2: [name, docs] for GET */
+    resp_next_str(fd, r, sizeof(r)); /* *2: [name, docs] for GET */
     CHECK(strcmp(r, "*2") == 0, "COMMAND DOCS GET: returns a two-element array", pass, fail);
-    resp_next_str(fd, r, sizeof(r));   /* name field */
+    resp_next_str(fd, r, sizeof(r)); /* name field */
     CHECK(strcmp(r, "get") == 0, "COMMAND DOCS GET: name field is 'get'", pass, fail);
-    resp_skip_reply(fd);               /* GET's docs map */
+    resp_skip_reply(fd); /* GET's docs map */
 
     resp_send(fd, 4, "COMMAND", "DOCS", "GET", "NOTACOMMAND");
-    resp_next_str(fd, r, sizeof(r));   /* *2: NOTACOMMAND dropped, only GET's pair remains */
-    CHECK(strcmp(r, "*2") == 0, "COMMAND DOCS GET NOTACOMMAND: unsupported name is dropped, not nil-padded", pass, fail);
-    resp_skip_reply(fd);               /* name */
-    resp_skip_reply(fd);               /* docs */
+    resp_next_str(fd, r, sizeof(r)); /* *2: NOTACOMMAND dropped, only GET's pair remains */
+    CHECK(strcmp(r, "*2") == 0, "COMMAND DOCS GET NOTACOMMAND: unsupported name is dropped, not nil-padded", pass,
+          fail);
+    resp_skip_reply(fd); /* name */
+    resp_skip_reply(fd); /* docs */
 
     resp_send(fd, 3, "COMMAND", "DOCS", "NOTACOMMAND");
-    resp_next_str(fd, r, sizeof(r));   /* *0: nothing left */
+    resp_next_str(fd, r, sizeof(r)); /* *0: nothing left */
     CHECK(strcmp(r, "*0") == 0, "COMMAND DOCS NOTACOMMAND: returns an empty array", pass, fail);
 
     resp_send(fd, 2, "COMMAND", "DOCS");
-    resp_next_str(fd, r, sizeof(r));   /* *2N: filtered down to proxy-supported commands */
+    resp_next_str(fd, r, sizeof(r)); /* *2N: filtered down to proxy-supported commands */
     CHECK(r[0] == '*', "COMMAND DOCS (no args): returns an array reply", pass, fail);
     if (r[0] == '*') {
         int n = atoi(r + 1);
@@ -881,7 +904,7 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
     /* ── COMMAND (no subcommand) ─────────────────────────────────────── */
     /* bare COMMAND has the same reply shape as COMMAND INFO with no args */
     resp_send(fd, 1, "COMMAND");
-    resp_next_str(fd, r, sizeof(r));   /* *N: filtered down to proxy-supported commands */
+    resp_next_str(fd, r, sizeof(r)); /* *N: filtered down to proxy-supported commands */
     CHECK(r[0] == '*', "COMMAND (no subcommand): returns an array reply", pass, fail);
     if (r[0] == '*') {
         int n = atoi(r + 1);
@@ -893,7 +916,7 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
     /* forwarded to a single arbitrary master node, but the reply is
      * post-processed so it only lists commands this proxy supports */
     resp_send(fd, 2, "COMMAND", "LIST");
-    resp_next_str(fd, r, sizeof(r));   /* *N: filtered down to proxy-supported commands */
+    resp_next_str(fd, r, sizeof(r)); /* *N: filtered down to proxy-supported commands */
     CHECK(r[0] == '*', "COMMAND LIST: returns an array reply", pass, fail);
     int cmd_list_n = 0;
     if (r[0] == '*') {
@@ -920,10 +943,12 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
     /* ── CLIENT ──────────────────────────────────────────────────────── */
     /* CLIENT HELP is answered directly by the proxy, no backend round-trip */
     resp_send(fd, 2, "CLIENT", "HELP");
-    resp_next_str(fd, r, sizeof(r));   /* *N header */
-    CHECK(r[0] == '*' && atoi(r + 1) > 0,
-          "CLIENT HELP: returns non-empty help array", pass, fail);
-    { int n = atoi(r + 1); for (int i = 0; i < n; i++) resp_next_str(fd, r, sizeof(r)); }
+    resp_next_str(fd, r, sizeof(r)); /* *N header */
+    CHECK(r[0] == '*' && atoi(r + 1) > 0, "CLIENT HELP: returns non-empty help array", pass, fail);
+    {
+        int n = atoi(r + 1);
+        for (int i = 0; i < n; i++) resp_next_str(fd, r, sizeof(r));
+    }
 
     /* CLIENT ID is assigned once at accept() time: stable across repeated
      * calls on the same connection, and distinct/monotonic across connections */
@@ -948,8 +973,8 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
             /* CLIENT GETNAME/SETNAME are per-connection state: fd2 must not
              * see anything set on fd */
             proxy_cmd(fd2, r, sizeof(r), 2, "CLIENT", "GETNAME");
-            CHECK(strcmp(r, "") == 0,
-                  "CLIENT GETNAME: empty on a fresh connection that never called SETNAME", pass, fail);
+            CHECK(strcmp(r, "") == 0, "CLIENT GETNAME: empty on a fresh connection that never called SETNAME", pass,
+                  fail);
             close(fd2);
         }
     }
@@ -1039,8 +1064,7 @@ void run_general_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 2, "DEL", "tc:cs:foo");
     proxy_cmd(fd, r, sizeof(r), 2, "DEL", "tc:cs:bar");
 
-    for (int i = 0; i < _ntr; i++)
-        printf("  [%s] %s\n", _tr[i].ok ? "PASS" : "FAIL", _tr[i].label);
+    for (int i = 0; i < _ntr; i++) printf("  [%s] %s\n", _tr[i].ok ? "PASS" : "FAIL", _tr[i].label);
 
     close(fd);
 }

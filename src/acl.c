@@ -25,19 +25,29 @@ static void acl_reply_ok(Worker *w, ClientConn *client) {
     static const char OK[] = "+OK\r\n";
     if (client->wbuf_cap < (int)sizeof(OK) - 1) {
         char *tmp = realloc(client->wbuf, sizeof(OK));
-        if (!tmp) { client_send_error(w, client, "out of memory"); close_client(w, client); return; }
-        client->wbuf = tmp; client->wbuf_cap = (int)sizeof(OK);
+        if (!tmp) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
+        client->wbuf = tmp;
+        client->wbuf_cap = (int)sizeof(OK);
     }
     memcpy(client->wbuf, OK, sizeof(OK) - 1);
-    client->wbuf_len = (int)sizeof(OK) - 1; client->wbuf_off = 0;
-    client->pbuf_len = 0; client->hbuf_len = 0; client->using_pbuf = 0;
+    client->wbuf_len = (int)sizeof(OK) - 1;
+    client->wbuf_off = 0;
+    client->pbuf_len = 0;
+    client->hbuf_len = 0;
+    client->using_pbuf = 0;
     client->state = CS_WRITING_RESP;
     fd_watch(w, client->fd, EL_WRITABLE);
 }
 
 static void acl_soft_fail(Worker *w, ClientConn *client, const char *msg) {
     client_send_error(w, client, msg);
-    client->pbuf_len = 0; client->hbuf_len = 0; client->using_pbuf = 0;
+    client->pbuf_len = 0;
+    client->hbuf_len = 0;
+    client->using_pbuf = 0;
     client->state = CS_READING_HDR;
     fd_watch(w, client->fd, EL_READABLE);
 }
@@ -58,23 +68,29 @@ void acl_teardown_all(Worker *w, ClientConn *client) {
 /* Top-level AUTH command: client->pbuf/pbuf_len holds the fully-buffered
  * "AUTH [user] pass" command. */
 void handle_auth_cmd(Worker *w, ClientConn *client) {
-    const char *args[8]; int arglens[8];
+    const char *args[8];
+    int arglens[8];
     int nargs = resp_extract_all_args(client->pbuf, client->pbuf_len, args, arglens, 8);
 
-    const char *user, *pass; int userlen, passlen;
+    const char *user, *pass;
+    int userlen, passlen;
     if (nargs == 1) {
-        user = "default"; userlen = 7;
-        pass = args[0]; passlen = arglens[0];
+        user = "default";
+        userlen = 7;
+        pass = args[0];
+        passlen = arglens[0];
     } else if (nargs == 2) {
-        user = args[0]; userlen = arglens[0];
-        pass = args[1]; passlen = arglens[1];
+        user = args[0];
+        userlen = arglens[0];
+        pass = args[1];
+        passlen = arglens[1];
     } else {
         acl_soft_fail(w, client, "wrong number of arguments for 'auth' command");
         return;
     }
 
-    if (userlen < 0 || passlen < 0 ||
-        userlen >= (int)sizeof(client->acl_user) || passlen >= (int)sizeof(client->acl_pass)) {
+    if (userlen < 0 || passlen < 0 || userlen >= (int)sizeof(client->acl_user) ||
+        passlen >= (int)sizeof(client->acl_pass)) {
         acl_soft_fail(w, client, "invalid username/password length");
         return;
     }
@@ -84,7 +100,8 @@ void handle_auth_cmd(Worker *w, ClientConn *client) {
     if (is_default) {
         if (client->acl_authenticated) acl_teardown_all(w, client);
         client->acl_authenticated = 0;
-        client->acl_userlen = 0; client->acl_passlen = 0;
+        client->acl_userlen = 0;
+        client->acl_passlen = 0;
         acl_reply_ok(w, client);
         return;
     }
@@ -99,33 +116,50 @@ void handle_auth_cmd(Worker *w, ClientConn *client) {
     int ni = topo_first_master(w);
 
     DbGroup *grp = db_group_get(w, client->db);
-    if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+    if (!grp) {
+        client_send_error(w, client, "db group error");
+        close_client(w, client);
+        return;
+    }
     ConnPool *pool = &grp->node_pools[ni].pools[POOL_ACL];
     PoolConn *conn = pool_acquire_nb(w, pool);
-    if (!conn) { acl_soft_fail(w, client, "ACL connection pool exhausted"); return; }
+    if (!conn) {
+        acl_soft_fail(w, client, "ACL connection pool exhausted");
+        return;
+    }
 
     /* NUL-terminated: CLIENT INFO prints acl_user with %s (fanout.c). */
-    memcpy(client->acl_user, user, (size_t)userlen); client->acl_user[userlen] = '\0';
+    memcpy(client->acl_user, user, (size_t)userlen);
+    client->acl_user[userlen] = '\0';
     client->acl_userlen = userlen;
-    memcpy(client->acl_pass, pass, (size_t)passlen); client->acl_passlen = passlen;
+    memcpy(client->acl_pass, pass, (size_t)passlen);
+    client->acl_passlen = passlen;
 
-    const char *aargs[2] = { client->acl_user, client->acl_pass };
-    int aarglens[2] = { userlen, passlen };
-    int authlen; char *authcmd = build_resp_cmd("AUTH", 4, aargs, aarglens, 2, &authlen);
+    const char *aargs[2] = {client->acl_user, client->acl_pass};
+    int aarglens[2] = {userlen, passlen};
+    int authlen;
+    char *authcmd = build_resp_cmd("AUTH", 4, aargs, aarglens, 2, &authlen);
     if (!authcmd) {
         pool_destroy_conn(w, conn);
-        client_send_error(w, client, "out of memory"); close_client(w, client); return;
+        client_send_error(w, client, "out of memory");
+        close_client(w, client);
+        return;
     }
     if (conn->wbuf_cap < authlen) {
         char *tmp = realloc(conn->wbuf, (size_t)authlen);
         if (!tmp) {
-            free(authcmd); pool_destroy_conn(w, conn);
-            client_send_error(w, client, "out of memory"); close_client(w, client); return;
+            free(authcmd);
+            pool_destroy_conn(w, conn);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
         }
-        conn->wbuf = tmp; conn->wbuf_cap = authlen;
+        conn->wbuf = tmp;
+        conn->wbuf_cap = authlen;
     }
     memcpy(conn->wbuf, authcmd, (size_t)authlen);
-    conn->wbuf_len = authlen; conn->wbuf_off = 0;
+    conn->wbuf_len = authlen;
+    conn->wbuf_off = 0;
     free(authcmd);
 
     conn->waiting_client = client;
@@ -134,7 +168,9 @@ void handle_auth_cmd(Worker *w, ClientConn *client) {
     client->acl_conns[ni] = conn;
     if (conn->fd >= 0 && conn->fd < g_config.max_connection) w->backend_map[conn->fd] = conn;
 
-    client->pbuf_len = 0; client->hbuf_len = 0; client->using_pbuf = 0;
+    client->pbuf_len = 0;
+    client->hbuf_len = 0;
+    client->using_pbuf = 0;
     client->state = CS_WAITING_RESP;
     fd_unwatch(w, client->fd, EL_READABLE);
     fd_watch(w, conn->fd, EL_WRITABLE);
@@ -159,28 +195,43 @@ int acl_route_business_cmd(Worker *w, ClientConn *client, int node_idx) {
     }
 
     DbGroup *grp = db_group_get(w, client->db);
-    if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return 0; }
+    if (!grp) {
+        client_send_error(w, client, "db group error");
+        close_client(w, client);
+        return 0;
+    }
     ConnPool *pool = &grp->node_pools[node_idx].pools[POOL_ACL];
     conn = pool_acquire_nb(w, pool);
-    if (!conn) { acl_soft_fail(w, client, "ACL connection pool exhausted for this node"); return 0; }
+    if (!conn) {
+        acl_soft_fail(w, client, "ACL connection pool exhausted for this node");
+        return 0;
+    }
 
-    const char *args[2] = { client->acl_user, client->acl_pass };
-    int arglens[2] = { client->acl_userlen, client->acl_passlen };
-    int authlen; char *authcmd = build_resp_cmd("AUTH", 4, args, arglens, 2, &authlen);
+    const char *args[2] = {client->acl_user, client->acl_pass};
+    int arglens[2] = {client->acl_userlen, client->acl_passlen};
+    int authlen;
+    char *authcmd = build_resp_cmd("AUTH", 4, args, arglens, 2, &authlen);
     if (!authcmd) {
         pool_destroy_conn(w, conn);
-        client_send_error(w, client, "out of memory"); close_client(w, client); return 0;
+        client_send_error(w, client, "out of memory");
+        close_client(w, client);
+        return 0;
     }
     if (conn->wbuf_cap < authlen) {
         char *tmp = realloc(conn->wbuf, (size_t)authlen);
         if (!tmp) {
-            free(authcmd); pool_destroy_conn(w, conn);
-            client_send_error(w, client, "out of memory"); close_client(w, client); return 0;
+            free(authcmd);
+            pool_destroy_conn(w, conn);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return 0;
         }
-        conn->wbuf = tmp; conn->wbuf_cap = authlen;
+        conn->wbuf = tmp;
+        conn->wbuf_cap = authlen;
     }
     memcpy(conn->wbuf, authcmd, (size_t)authlen);
-    conn->wbuf_len = authlen; conn->wbuf_off = 0;
+    conn->wbuf_len = authlen;
+    conn->wbuf_off = 0;
     free(authcmd);
 
     conn->waiting_client = client;
@@ -210,7 +261,11 @@ int acl_route_business_cmd(Worker *w, ClientConn *client, int node_idx) {
 static void acl_forward_to_one_node(Worker *w, ClientConn *client) {
     int ni = topo_first_master(w);
     DbGroup *grp = db_group_get(w, client->db);
-    if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+    if (!grp) {
+        client_send_error(w, client, "db group error");
+        close_client(w, client);
+        return;
+    }
     ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
     PoolConn *conn = pool_acquire_nb(w, pool);
     if (!conn) {
@@ -227,14 +282,17 @@ static void acl_forward_to_one_node(Worker *w, ClientConn *client) {
 
 void handle_acl_cmd(Worker *w, ClientConn *client, int cmdlen) {
     (void)cmdlen;
-    const char *sub; int sublen;
+    const char *sub;
+    int sublen;
     if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 1, &sub, &sublen)) {
         client_send_error(w, client, "wrong number of arguments for 'acl' command");
         client->hbuf_len = 0;
         return;
     }
-    char subcmd[32]; int sclen = sublen < 31 ? sublen : 31;
-    memcpy(subcmd, sub, (size_t)sclen); subcmd[sclen] = '\0';
+    char subcmd[32];
+    int sclen = sublen < 31 ? sublen : 31;
+    memcpy(subcmd, sub, (size_t)sclen);
+    subcmd[sclen] = '\0';
     for (int i = 0; subcmd[i]; i++) subcmd[i] = (char)toupper((unsigned char)subcmd[i]);
 
     if (!strcmp(subcmd, "HELP")) {
@@ -242,9 +300,8 @@ void handle_acl_cmd(Worker *w, ClientConn *client, int cmdlen) {
         acl_forward_to_one_node(w, client);
         return;
     }
-    if (!strcmp(subcmd, "LIST") || !strcmp(subcmd, "USERS")  ||
-        !strcmp(subcmd, "WHOAMI") || !strcmp(subcmd, "GETUSER") ||
-        !strcmp(subcmd, "DRYRUN")) {
+    if (!strcmp(subcmd, "LIST") || !strcmp(subcmd, "USERS") || !strcmp(subcmd, "WHOAMI") ||
+        !strcmp(subcmd, "GETUSER") || !strcmp(subcmd, "DRYRUN")) {
         /* A client that has AUTH'd as a non-default user must see its own
          * identity/permissions reflected (WHOAMI in particular is otherwise
          * meaningless), so route through its pinned, already-authenticated
@@ -267,24 +324,47 @@ void handle_acl_cmd(Worker *w, ClientConn *client, int cmdlen) {
  * text and answer with the proxy's fixed ACL HELP array instead. */
 void handle_acl_help_readable(Worker *w, PoolConn *conn) {
     ClientConn *cl = conn->waiting_client;
-    if (!cl) { fd_unwatch(w, conn->fd, EL_READABLE); return; }
+    if (!cl) {
+        fd_unwatch(w, conn->fd, EL_READABLE);
+        return;
+    }
 
     int rlen;
     for (;;) {
         if (conn->rbuf_cap - conn->rbuf_len < 4096) {
             int nc = conn->rbuf_cap ? conn->rbuf_cap * 2 : 4096;
-            if (nc > MAX_RESP_SIZE) { client_send_error(w, cl, "response too large"); close_client(w, cl); return; }
+            if (nc > MAX_RESP_SIZE) {
+                client_send_error(w, cl, "response too large");
+                close_client(w, cl);
+                return;
+            }
             char *tmp = realloc(conn->rbuf, (size_t)nc);
-            if (!tmp) { client_send_error(w, cl, "out of memory"); close_client(w, cl); return; }
-            conn->rbuf = tmp; conn->rbuf_cap = nc;
+            if (!tmp) {
+                client_send_error(w, cl, "out of memory");
+                close_client(w, cl);
+                return;
+            }
+            conn->rbuf = tmp;
+            conn->rbuf_cap = nc;
         }
         ssize_t n = read(conn->fd, conn->rbuf + conn->rbuf_len, (size_t)(conn->rbuf_cap - conn->rbuf_len));
-        if (n < 0) { if (errno == EAGAIN) return; close_client(w, cl); return; }
-        if (n == 0) { close_client(w, cl); return; }
+        if (n < 0) {
+            if (errno == EAGAIN) return;
+            close_client(w, cl);
+            return;
+        }
+        if (n == 0) {
+            close_client(w, cl);
+            return;
+        }
         conn->rbuf_len += (int)n;
 
         rlen = resp_response_len(conn->rbuf, conn->rbuf_len);
-        if (rlen < 0) { client_send_error(w, cl, "bad backend response"); close_client(w, cl); return; }
+        if (rlen < 0) {
+            client_send_error(w, cl, "bad backend response");
+            close_client(w, cl);
+            return;
+        }
         if (rlen > 0) break;
     }
 
@@ -293,11 +373,17 @@ void handle_acl_help_readable(Worker *w, PoolConn *conn) {
     if (is_error) {
         if (cl->wbuf_cap < rlen) {
             char *tmp = realloc(cl->wbuf, (size_t)rlen);
-            if (!tmp) { client_send_error(w, cl, "out of memory"); close_client(w, cl); return; }
-            cl->wbuf = tmp; cl->wbuf_cap = rlen;
+            if (!tmp) {
+                client_send_error(w, cl, "out of memory");
+                close_client(w, cl);
+                return;
+            }
+            cl->wbuf = tmp;
+            cl->wbuf_cap = rlen;
         }
         memcpy(cl->wbuf, conn->rbuf, (size_t)rlen);
-        cl->wbuf_len = rlen; cl->wbuf_off = 0;
+        cl->wbuf_len = rlen;
+        cl->wbuf_off = 0;
     }
 
     conn->rbuf_len = 0;
@@ -334,7 +420,10 @@ void handle_acl_help_readable(Worker *w, PoolConn *conn) {
 /* handle_backend_readable()'s POOL_ACL special case. */
 void handle_acl_conn_readable(Worker *w, PoolConn *conn) {
     ClientConn *cl = conn->waiting_client;
-    if (!cl) { fd_unwatch(w, conn->fd, EL_READABLE); return; }
+    if (!cl) {
+        fd_unwatch(w, conn->fd, EL_READABLE);
+        return;
+    }
 
     /* Drain everything already buffered on this backend fd in one go
      * (edge-triggered epoll won't re-notify for a burst that already
@@ -343,19 +432,39 @@ void handle_acl_conn_readable(Worker *w, PoolConn *conn) {
     for (;;) {
         if (conn->rbuf_cap - conn->rbuf_len < 4096) {
             int nc = conn->rbuf_cap ? conn->rbuf_cap * 2 : 4096;
-            if (nc > MAX_RESP_SIZE) { client_send_error(w, cl, "response too large"); close_client(w, cl); return; }
+            if (nc > MAX_RESP_SIZE) {
+                client_send_error(w, cl, "response too large");
+                close_client(w, cl);
+                return;
+            }
             char *tmp = realloc(conn->rbuf, (size_t)nc);
-            if (!tmp) { client_send_error(w, cl, "out of memory"); close_client(w, cl); return; }
-            conn->rbuf = tmp; conn->rbuf_cap = nc;
+            if (!tmp) {
+                client_send_error(w, cl, "out of memory");
+                close_client(w, cl);
+                return;
+            }
+            conn->rbuf = tmp;
+            conn->rbuf_cap = nc;
         }
 
         ssize_t n = read(conn->fd, conn->rbuf + conn->rbuf_len, (size_t)(conn->rbuf_cap - conn->rbuf_len));
-        if (n < 0) { if (errno == EAGAIN) return; close_client(w, cl); return; }
-        if (n == 0) { close_client(w, cl); return; }
+        if (n < 0) {
+            if (errno == EAGAIN) return;
+            close_client(w, cl);
+            return;
+        }
+        if (n == 0) {
+            close_client(w, cl);
+            return;
+        }
         conn->rbuf_len += (int)n;
 
         rlen = resp_response_len(conn->rbuf, conn->rbuf_len);
-        if (rlen < 0) { client_send_error(w, cl, "bad backend response"); close_client(w, cl); return; }
+        if (rlen < 0) {
+            client_send_error(w, cl, "bad backend response");
+            close_client(w, cl);
+            return;
+        }
         if (rlen > 0) break;
     }
 
@@ -381,13 +490,20 @@ void handle_acl_conn_readable(Worker *w, PoolConn *conn) {
             if (is_login_probe) {
                 if (cl->wbuf_cap < rlen) {
                     char *tmp = realloc(cl->wbuf, (size_t)rlen);
-                    if (!tmp) { client_send_error(w, cl, "out of memory"); close_client(w, cl); return; }
-                    cl->wbuf = tmp; cl->wbuf_cap = rlen;
+                    if (!tmp) {
+                        client_send_error(w, cl, "out of memory");
+                        close_client(w, cl);
+                        return;
+                    }
+                    cl->wbuf = tmp;
+                    cl->wbuf_cap = rlen;
                 }
                 memcpy(cl->wbuf, conn->rbuf, (size_t)rlen);
-                cl->wbuf_len = rlen; cl->wbuf_off = 0;
+                cl->wbuf_len = rlen;
+                cl->wbuf_off = 0;
                 cl->acl_authenticated = 0;
-                cl->acl_userlen = 0; cl->acl_passlen = 0;
+                cl->acl_userlen = 0;
+                cl->acl_passlen = 0;
             }
             conn->rbuf_len = 0;
             cl->acl_conns[node_idx] = NULL;
@@ -395,7 +511,9 @@ void handle_acl_conn_readable(Worker *w, PoolConn *conn) {
             pool_destroy_conn(w, conn);
 
             if (is_login_probe) {
-                cl->pbuf_len = 0; cl->hbuf_len = 0; cl->using_pbuf = 0;
+                cl->pbuf_len = 0;
+                cl->hbuf_len = 0;
+                cl->using_pbuf = 0;
                 cl->state = CS_WRITING_RESP;
                 fd_watch(w, cl->fd, EL_WRITABLE);
             } else {
@@ -422,7 +540,11 @@ void handle_acl_conn_readable(Worker *w, PoolConn *conn) {
     {
         int dr = deliver_backend_reply(w, cl, conn, conn->rbuf, rlen);
         if (dr == -2) return; /* already client_send_error()+close_client()'d */
-        if (dr < 0) { client_send_error(w, cl, "bad backend response"); close_client(w, cl); return; }
+        if (dr < 0) {
+            client_send_error(w, cl, "bad backend response");
+            close_client(w, cl);
+            return;
+        }
     }
     conn->rbuf_len = 0;
 

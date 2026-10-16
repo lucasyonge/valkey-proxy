@@ -19,8 +19,8 @@
  *                         default-identity pools.
  */
 
-const char *g_test_acl_user    = NULL;
-const char *g_test_acl_pass    = NULL;
+const char *g_test_acl_user = NULL;
+const char *g_test_acl_pass = NULL;
 const char *g_test_acl_ro_user = NULL;
 const char *g_test_acl_ro_pass = NULL;
 
@@ -29,8 +29,8 @@ const char *g_test_acl_ro_pass = NULL;
 
 static char fixture_pass[64], fixture_ro_pass[64];
 static char node_host[64][256];
-static int  node_port[64];
-static int  node_count = 0;
+static int node_port[64];
+static int node_count = 0;
 
 /* Runs one command directly against a cluster node; returns 1 if the reply
  * is +OK or an integer (ACL DELUSER), 0 otherwise. */
@@ -40,8 +40,7 @@ static int node_cmd_ok(const char *host, int port, int argc, const char **args) 
     int arglens[16];
     for (int i = 0; i < argc; i++) arglens[i] = (int)strlen(args[i]);
     char r[256];
-    int ok = resp_send_raw(fd, argc, args, arglens) == 0 &&
-             resp_next_str(fd, r, sizeof(r)) != NULL &&
+    int ok = resp_send_raw(fd, argc, args, arglens) == 0 && resp_next_str(fd, r, sizeof(r)) != NULL &&
              (strcmp(r, "+OK") == 0 || r[0] == ':');
     close(fd);
     return ok;
@@ -51,19 +50,17 @@ static void create_on_node(const char *host, int port, int *ok) {
     char full_pw[80], ro_pw[80];
     snprintf(full_pw, sizeof(full_pw), ">%s", fixture_pass);
     snprintf(ro_pw, sizeof(ro_pw), ">%s", fixture_ro_pass);
-    const char *full[] = { "ACL", "SETUSER", FIXTURE_USER, "reset", "on", full_pw,
-                           "~*", "&*", "+@all" };
-    const char *ro[]   = { "ACL", "SETUSER", FIXTURE_RO_USER, "reset", "on", ro_pw,
-                           "~*", "+@read", "+@connection", "+acl|whoami" };
+    const char *full[] = {"ACL", "SETUSER", FIXTURE_USER, "reset", "on", full_pw, "~*", "&*", "+@all"};
+    const char *ro[] = {"ACL", "SETUSER", FIXTURE_RO_USER, "reset",        "on",
+                        ro_pw, "~*",      "+@read",        "+@connection", "+acl|whoami"};
     if (!node_cmd_ok(host, port, 9, full) || !node_cmd_ok(host, port, 10, ro)) *ok = 0;
 }
 
 void test_acl_fixture_teardown(void) {
     for (int i = 0; i < node_count; i++) {
-        const char *del[] = { "ACL", "DELUSER", FIXTURE_USER, FIXTURE_RO_USER };
+        const char *del[] = {"ACL", "DELUSER", FIXTURE_USER, FIXTURE_RO_USER};
         if (!node_cmd_ok(node_host[i], node_port[i], 4, del))
-            fprintf(stderr, "warning: could not delete test ACL users on %s:%d\n",
-                    node_host[i], node_port[i]);
+            fprintf(stderr, "warning: could not delete test ACL users on %s:%d\n", node_host[i], node_port[i]);
     }
     node_count = 0;
     g_test_acl_user = g_test_acl_pass = NULL;
@@ -73,7 +70,8 @@ void test_acl_fixture_teardown(void) {
 /* seed is "host:port". Returns 0 on success (globals set), -1 otherwise
  * (anything already created is removed again, globals stay NULL). */
 int test_acl_fixture_setup(const char *seed) {
-    char host[64]; int port;
+    char host[64];
+    int port;
     if (sscanf(seed, "%63[^:]:%d", host, &port) != 2) {
         fprintf(stderr, "--cluster: expected <host:port>, got '%s'\n", seed);
         return -1;
@@ -95,14 +93,19 @@ int test_acl_fixture_setup(const char *seed) {
         char id[64], addr[256], flags[256];
         if (sscanf(line, "%63s %255s %255s", id, addr, flags) != 3) continue;
         if (strstr(flags, "fail") || strstr(flags, "noaddr") || strstr(flags, "handshake")) continue;
-        char *at = strchr(addr, '@'); if (at) *at = '\0';
-        char *colon = strrchr(addr, ':'); if (!colon) continue;
+        char *at = strchr(addr, '@');
+        if (at) *at = '\0';
+        char *colon = strrchr(addr, ':');
+        if (!colon) continue;
         *colon = '\0';
         snprintf(node_host[node_count], sizeof(node_host[0]), "%s", addr);
         node_port[node_count] = atoi(colon + 1);
         node_count++;
     }
-    if (node_count == 0) { fprintf(stderr, "--cluster: no usable nodes found\n"); return -1; }
+    if (node_count == 0) {
+        fprintf(stderr, "--cluster: no usable nodes found\n");
+        return -1;
+    }
 
     snprintf(fixture_pass, sizeof(fixture_pass), "tc-pw-%d", (int)getpid());
     snprintf(fixture_ro_pass, sizeof(fixture_ro_pass), "tc-ro-pw-%d", (int)getpid());
@@ -114,9 +117,10 @@ int test_acl_fixture_setup(const char *seed) {
         return -1;
     }
 
-    g_test_acl_user    = FIXTURE_USER;    g_test_acl_pass    = fixture_pass;
-    g_test_acl_ro_user = FIXTURE_RO_USER; g_test_acl_ro_pass = fixture_ro_pass;
-    printf("Created test ACL users %s / %s on %d cluster node(s)\n",
-           FIXTURE_USER, FIXTURE_RO_USER, node_count);
+    g_test_acl_user = FIXTURE_USER;
+    g_test_acl_pass = fixture_pass;
+    g_test_acl_ro_user = FIXTURE_RO_USER;
+    g_test_acl_ro_pass = fixture_ro_pass;
+    printf("Created test ACL users %s / %s on %d cluster node(s)\n", FIXTURE_USER, FIXTURE_RO_USER, node_count);
     return 0;
 }

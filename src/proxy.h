@@ -24,19 +24,19 @@
 #endif
 
 /* ── constants ──────────────────────────────────────────────────────── */
-#define MAX_NODES      64
-#define MAX_WORKERS    64
+#define MAX_NODES   64
+#define MAX_WORKERS 64
 /* Fallback for the "max_connection" proxy.conf setting (g_config.max_connection)
  * when the config file doesn't set it. This is the shared fd budget for the
  * whole process: client sockets + backend pool connections + listener(s). */
 #define DEFAULT_MAX_CONNECTIONS 4000
-#define CLUSTER_SLOTS  16384
-#define HDR_BUF_SIZE   16384
-#define MAX_RESP_SIZE  (64*1024*1024)
+#define CLUSTER_SLOTS           16384
+#define HDR_BUF_SIZE            16384
+#define MAX_RESP_SIZE           (64 * 1024 * 1024)
 
-#define CLUSTER_NODES_CMD  "*2\r\n$7\r\nCLUSTER\r\n$5\r\nNODES\r\n"
-#define MAX_FANOUT_KEYS  256
-#define MAX_FANOUT_SUBS  MAX_FANOUT_KEYS
+#define CLUSTER_NODES_CMD "*2\r\n$7\r\nCLUSTER\r\n$5\r\nNODES\r\n"
+#define MAX_FANOUT_KEYS   256
+#define MAX_FANOUT_SUBS   MAX_FANOUT_KEYS
 
 /* ── pool types ─────────────────────────────────────────────────────── */
 typedef enum {
@@ -74,43 +74,43 @@ typedef enum {
 extern const char *CMD_CLASS_NAME[];
 
 /* ── forward declarations ───────────────────────────────────────────── */
-typedef struct ConnPool   ConnPool;
+typedef struct ConnPool ConnPool;
 typedef struct ClientConn ClientConn;
-typedef struct FanoutSub  FanoutSub;
-typedef struct FanoutCtx  FanoutCtx;
+typedef struct FanoutSub FanoutSub;
+typedef struct FanoutCtx FanoutCtx;
 
 /* ── pool connection ────────────────────────────────────────────────── */
-typedef enum { CONN_AVAILABLE=0, CONN_IN_USE=1 } ConnState;
+typedef enum { CONN_AVAILABLE = 0, CONN_IN_USE = 1 } ConnState;
 
 typedef struct {
-    int         fd;
-    ConnState   state;
-    int         db;
-    ConnPool   *pool;
+    int fd;
+    ConnState state;
+    int db;
+    ConnPool *pool;
     ClientConn *waiting_client;
-    FanoutSub  *fanout_sub;
+    FanoutSub *fanout_sub;
     /* Only meaningful when pool->type==POOL_ACL: set while this connection is
      * waiting on the reply to an internal AUTH handshake (either the top-level
      * AUTH command's own credential probe, or a transparent per-node
      * reconnect-and-reauth done on behalf of a queued business command). */
-    int         acl_authenticating;
-    int         acl_is_login_probe;
+    int acl_authenticating;
+    int acl_is_login_probe;
     /* Login probe issued by "HELLO <ver> AUTH user pass" rather than by the
      * AUTH command (see hello.c): owned via ClientConn.hello_auth_conn, not
      * acl_conns[], until it succeeds. acl_hello_resp3 = the probe sent
      * "HELLO 3 AUTH ..." (so success also means this conn speaks RESP3)
      * instead of a plain "AUTH ...". */
-    int         acl_hello_login;
-    int         acl_hello_resp3;
+    int acl_hello_login;
+    int acl_hello_resp3;
     /* RESP3 handshake state (see src/hello.c). resp3=1 once this connection
      * has completed its own "HELLO 3" with the backend and therefore speaks
      * RESP3 from now on; resp3_handshake=1 while a HELLO 3 sent on this
      * connection (either the one-time global capability probe, or an
      * ordinary lazy per-connection upgrade) is in flight. resp3_probe
      * distinguishes the two: only meaningful while resp3_handshake is set. */
-    int         resp3;
-    int         resp3_handshake;
-    int         resp3_probe;
+    int resp3;
+    int resp3_handshake;
+    int resp3_probe;
     /* While resp3_handshake is set, wbuf is occupied by the HELLO 3 bytes,
      * so the real command this connection was about to forward (for the
      * call sites that have no client-side hbuf/pbuf to fall back on -- fan-
@@ -119,12 +119,12 @@ typedef struct {
      * append calls (see resp3_defer_append() in hello.c): pubsub in
      * particular may see more than one client command land on the same
      * sub_conn before its in-flight handshake replies. */
-    char       *resp3_deferred_cmd;
-    int         resp3_deferred_len, resp3_deferred_cap;
-    char       *wbuf;
-    int         wbuf_len, wbuf_off, wbuf_cap;
-    char       *rbuf;
-    int         rbuf_len, rbuf_cap;
+    char *resp3_deferred_cmd;
+    int resp3_deferred_len, resp3_deferred_cap;
+    char *wbuf;
+    int wbuf_len, wbuf_off, wbuf_cap;
+    char *rbuf;
+    int rbuf_len, rbuf_cap;
     /* Bumped every time this slot is handed to a new logical owner (via
      * pool_acquire_nb or pool_release's waiter hand-off). A single epoll
      * batch can report EPOLLHUP/EPOLLERR as both readable and writable on
@@ -132,128 +132,135 @@ typedef struct {
      * new owner, the dispatch loop uses this to detect that and skip the
      * now-stale readable dispatch instead of misapplying it to the new
      * owner. */
-    uint32_t    epoch;
+    uint32_t epoch;
     /* Set by worker_sync_topology() when this index's node identity has
      * moved on (failover / grace-period eviction) while this connection was
      * CONN_IN_USE. pool_release() checks this instead of tearing the
      * in-flight request down immediately: the connection is reconnected (or
      * destroyed on failure) only once the caller is done with it. */
-    int         discard_on_release;
+    int discard_on_release;
 } PoolConn;
 
 struct ConnPool {
-    PoolType        type;
-    PoolConn       *conns;
-    int             count, max;
-    int             node_idx, db;
-    EventLoop      *el;
+    PoolType type;
+    PoolConn *conns;
+    int count, max;
+    int node_idx, db;
+    EventLoop *el;
     pthread_mutex_t lock;
-    ClientConn    **wait_queue;
-    int             wait_len, wait_cap;
+    ClientConn **wait_queue;
+    int wait_len, wait_cap;
 };
 
 /* gen mirrors the owning Worker's topo.node_gen[node_idx] as of the last time
  * this NodePools was (re)synced -- see worker_sync_topology(). -1 means this
  * index has never been backed by a live shard yet (no pools initialized). */
-typedef struct { int node_idx; int gen; ConnPool pools[POOL_TYPE_COUNT]; } NodePools;
-typedef struct { int db; NodePools *node_pools; } DbGroup;
+typedef struct {
+    int node_idx;
+    int gen;
+    ConnPool pools[POOL_TYPE_COUNT];
+} NodePools;
+typedef struct {
+    int db;
+    NodePools *node_pools;
+} DbGroup;
 
 /* ── client connection ──────────────────────────────────────────────── */
 struct ClientConn {
-    int         fd, db;
-    int         in_transaction, in_subscribe;
+    int fd, db;
+    int in_transaction, in_subscribe;
     ClientState state;
-    char        hbuf[HDR_BUF_SIZE];
-    int         hbuf_len;
-    int         node_idx;
-    int         total_cmd_len;
-    long long   cmd_remaining;
-    PoolConn   *pending_conn;
-    ConnPool   *waiting_pool;
-    char       *wbuf;
-    int         wbuf_len, wbuf_off, wbuf_cap;
-    char       *pbuf;
-    int         pbuf_len, pbuf_cap;
-    int         using_pbuf;
-    FanoutCtx  *fanout_ctx;
-    PoolConn   *sub_conn;
+    char hbuf[HDR_BUF_SIZE];
+    int hbuf_len;
+    int node_idx;
+    int total_cmd_len;
+    long long cmd_remaining;
+    PoolConn *pending_conn;
+    ConnPool *waiting_pool;
+    char *wbuf;
+    int wbuf_len, wbuf_off, wbuf_cap;
+    char *pbuf;
+    int pbuf_len, pbuf_cap;
+    int using_pbuf;
+    FanoutCtx *fanout_ctx;
+    PoolConn *sub_conn;
     /* ── CLIENT ID / GETNAME / SETNAME (see handle_client_cmd in fanout.c) ── */
-    long long   id;
-    char        name[64];
-    int         namelen;
+    long long id;
+    char name[64];
+    int namelen;
     /* HELLO 3 SETNAME's name, held back while the RESP3 probe is in flight
      * so a failed probe leaves client->name untouched (see hello.c). */
-    int         hello_pending_setname;
-    char        hello_pending_name[64];
-    int         hello_pending_namelen;
+    int hello_pending_setname;
+    char hello_pending_name[64];
+    int hello_pending_namelen;
     /* HELLO ... AUTH, applied only once the whole HELLO succeeds (see
      * hello.c). hello_pending_auth_default: switch back to the default
      * identity on commit. hello_auth_conn: in-flight POOL_ACL login probe
      * for a non-default user -- kept out of acl_conns[] so a failed login
      * leaves the client's current identity and pinned conns untouched. */
-    int         hello_pending_auth_default;
-    PoolConn   *hello_auth_conn;
-    char        hello_auth_user[64];
-    char        hello_auth_pass[512];
-    int         hello_auth_userlen, hello_auth_passlen;
-    int         hello_auth_protover;
+    int hello_pending_auth_default;
+    PoolConn *hello_auth_conn;
+    char hello_auth_user[64];
+    char hello_auth_pass[512];
+    int hello_auth_userlen, hello_auth_passlen;
+    int hello_auth_protover;
     /* ── CLIENT INFO metadata (see format_client_info_line in fanout.c) ── */
-    char        addr[280];      /* peer ip:port, or "<unix_socket_path>:0" */
-    char        laddr[280];     /* proxy-side local ip:port for this connection */
-    time_t      connect_time;
-    time_t      last_interaction;
-    char        last_cmd[40];   /* lowercase "cmd" or "cmd|subcommand" */
-    int         sub_count, psub_count, ssub_count;
-    int         multi_count;    /* # cmds queued since MULTI; -1 when not in a transaction */
-    int         watch_count;
+    char addr[280];  /* peer ip:port, or "<unix_socket_path>:0" */
+    char laddr[280]; /* proxy-side local ip:port for this connection */
+    time_t connect_time;
+    time_t last_interaction;
+    char last_cmd[40]; /* lowercase "cmd" or "cmd|subcommand" */
+    int sub_count, psub_count, ssub_count;
+    int multi_count; /* # cmds queued since MULTI; -1 when not in a transaction */
+    int watch_count;
     /* ── ACL identity (see src/acl.c) ──────────────────────────────────── */
-    int         acl_authenticated;      /* 1 = using a non-default ACL identity */
-    char        acl_user[64];
-    char        acl_pass[512];
-    int         acl_userlen, acl_passlen;
-    PoolConn   *acl_conns[MAX_NODES];   /* per-node pinned, authenticated conn;
+    int acl_authenticated; /* 1 = using a non-default ACL identity */
+    char acl_user[64];
+    char acl_pass[512];
+    int acl_userlen, acl_passlen;
+    PoolConn *acl_conns[MAX_NODES]; /* per-node pinned, authenticated conn;
                                             NULL = not yet connected to that node */
-    int         waiting_acl_help;       /* 1 = pending reply is an ACL HELP probe */
+    int waiting_acl_help;           /* 1 = pending reply is an ACL HELP probe */
     /* ── RESP protocol version (see src/hello.c) ────────────────────────── */
-    int         resp;                   /* 2 or 3; set at accept() time, changed by HELLO */
+    int resp; /* 2 or 3; set at accept() time, changed by HELLO */
 #ifdef USE_TLS
-    SSL        *ssl;
+    SSL *ssl;
 #endif
 };
 
 /* ── fan-out sub-request and context ───────────────────────────────── */
 struct FanoutSub {
-    FanoutCtx  *ctx;
-    int         sub_idx;
-    int         node_idx;
-    PoolConn   *conn;
-    char       *rbuf;
-    int         rbuf_len, rbuf_cap;
-    int         done, error;
+    FanoutCtx *ctx;
+    int sub_idx;
+    int node_idx;
+    PoolConn *conn;
+    char *rbuf;
+    int rbuf_len, rbuf_cap;
+    int done, error;
 };
 
 struct FanoutCtx {
     ClientConn *client;
-    char        cmd[16];
-    int         nsubs, ndone, had_error;
-    FanoutSub   subs[MAX_FANOUT_SUBS];
-    int         total_keys;
-    int         mget_sub[MAX_FANOUT_KEYS];
-    int         mget_pos[MAX_FANOUT_KEYS];
-    uint64_t    scan_node_cursors[MAX_NODES];
-    int         scan_ntargets;
-    int         scan_target_nodes[MAX_NODES];
-    int         sub_for_node[MAX_NODES];
-    int         lcs_mode;
-    long long   slowlog_count;  /* SLOWLOG/COMMANDLOG GET: max merged entries, -1 = all */
+    char cmd[16];
+    int nsubs, ndone, had_error;
+    FanoutSub subs[MAX_FANOUT_SUBS];
+    int total_keys;
+    int mget_sub[MAX_FANOUT_KEYS];
+    int mget_pos[MAX_FANOUT_KEYS];
+    uint64_t scan_node_cursors[MAX_NODES];
+    int scan_ntargets;
+    int scan_target_nodes[MAX_NODES];
+    int sub_for_node[MAX_NODES];
+    int lcs_mode;
+    long long slowlog_count; /* SLOWLOG/COMMANDLOG GET: max merged entries, -1 = all */
 };
 
 /* ── cluster / config ───────────────────────────────────────────────── */
 typedef struct {
     char node_id[64], ip[64];
-    int  port;
+    int port;
     char flags[128];
-    int  is_master;
+    int is_master;
 } ClusterNode;
 
 /* Per-worker frozen view of the cluster topology, refreshed wholesale from
@@ -264,50 +271,50 @@ typedef struct {
  * refresh thread publishes a new topology mid-command. */
 typedef struct {
     ClusterNode nodes[MAX_NODES];
-    int         node_gen[MAX_NODES];
-    int         node_has_slots[MAX_NODES];
-    int         node_count;
-    int         slot_map[CLUSTER_SLOTS];
-    int         version;
+    int node_gen[MAX_NODES];
+    int node_has_slots[MAX_NODES];
+    int node_count;
+    int slot_map[CLUSTER_SLOTS];
+    int version;
 } TopoSnapshot;
 
 /* ── worker ─────────────────────────────────────────────────────────── */
 typedef struct {
-    int             thread_id;
-    pthread_t       tid;
-    EventLoop      *el;
-    DbGroup        *db_groups;
-    int             db_group_count, db_group_cap;
+    int thread_id;
+    pthread_t tid;
+    EventLoop *el;
+    DbGroup *db_groups;
+    int db_group_count, db_group_cap;
     pthread_mutex_t db_lock;
     /* Sized at startup to g_config.max_connection (see worker_thread()),
      * since that value is only known once proxy.conf has been parsed. */
-    ClientConn    **client_map;
-    PoolConn      **backend_map;
-    uint8_t        *fd_mask;
-    TopoSnapshot    topo;
-    int             topology_version_seen;
+    ClientConn **client_map;
+    PoolConn **backend_map;
+    uint8_t *fd_mask;
+    TopoSnapshot topo;
+    int topology_version_seen;
     /* Self-pipe: read end sits in this worker's own event loop like any
      * other fd, write end is used by the topology refresh thread (see
      * reconcile_and_publish()/wake_all_workers() in cluster.c) to kick this
      * worker out of a blocking el_poll(-1) as soon as a new topology is
      * published, instead of waiting for it to next wake up on its own via
      * client/backend traffic. -1 until worker_thread() sets it up. */
-    int             wake_r, wake_w;
+    int wake_r, wake_w;
 } Worker;
 
 typedef struct {
     char server_ip[64];
-    int  server_port;
+    int server_port;
     char bind_ip[64];
-    int  proxy_port;
-    int  worker_thread_no, db;
+    int proxy_port;
+    int worker_thread_no, db;
     char unix_socket_path[256];
-    int  tls_enabled;
+    int tls_enabled;
     char tls_cert[256], tls_key[256];
-    int  max_multikey_payload;
-    int  max_connection;
-    int  cluster_refresh_interval_ms;  /* 0 = periodic refresh disabled */
-    int  cluster_node_fail_grace_ms;
+    int max_multikey_payload;
+    int max_connection;
+    int cluster_refresh_interval_ms; /* 0 = periodic refresh disabled */
+    int cluster_node_fail_grace_ms;
     /* Connect timeout for backend connections made *after* startup: pool
      * (re)connects from a worker thread and the periodic topology refresh's
      * own probes. Kept short by default so a momentarily-unreachable node
@@ -315,27 +322,27 @@ typedef struct {
      * doesn't tie up a worker thread or stall a whole refresh cycle for
      * seconds -- unlike the one-shot startup discovery, which uses a fixed,
      * more generous timeout since it blocks nothing but its own boot. */
-    int  backend_connect_timeout_ms;
+    int backend_connect_timeout_ms;
 } Config;
 
 /* ── globals ────────────────────────────────────────────────────────── */
-extern Config      g_config;
+extern Config g_config;
 extern ClusterNode g_nodes[MAX_NODES];
-extern int         g_node_count;
-extern int         g_slot_map[CLUSTER_SLOTS];
+extern int g_node_count;
+extern int g_slot_map[CLUSTER_SLOTS];
 /* Parallel to g_nodes: bumped whenever index i's identity is reassigned
  * (new shard taking over a free index, failover to a different physical
  * node, or grace-period eviction after an unpromoted master fail). Workers
  * compare their cached NodePools.gen against this to know which pools need
  * to be flushed/reconnected -- see worker_sync_topology() in pool.c. */
-extern int         g_node_gen[MAX_NODES];
+extern int g_node_gen[MAX_NODES];
 /* Whether index i owns at least one slot as of the last published topology.
  * False for an index that's been grace-released with no new claimant
  * (scenario 2) -- workers use this to tell that case apart from a failover
  * (scenario 3, gen also bumped but the index *does* still own slots, just
  * under a new address) so they know whether reconnecting is worthwhile. */
-extern int         g_node_has_slots[MAX_NODES];
-extern atomic_int  g_topology_version;
+extern int g_node_has_slots[MAX_NODES];
+extern atomic_int g_topology_version;
 /* Sticky, process-wide: 0 until the first client's "HELLO 3" successfully
  * probes backend RESP3 support (see resp3_start_probe() in hello.c), then
  * stays 1 for the rest of the process's life -- never reset back to 0. Once
@@ -345,13 +352,13 @@ extern atomic_int  g_topology_version;
  * command triggers that. Deliberately much simpler than g_topology_version:
  * there is no "downgrade" to detect, so no per-worker snapshot/diff is
  * needed -- a plain atomic load at the point of use suffices. */
-extern atomic_int  g_backend_resp3_active;
+extern atomic_int g_backend_resp3_active;
 extern atomic_llong g_next_client_id;
 extern pthread_rwlock_t g_topology_lock;
-extern Worker      g_workers[MAX_WORKERS];
-extern int         g_tcp_fd, g_unix_fd;
+extern Worker g_workers[MAX_WORKERS];
+extern int g_tcp_fd, g_unix_fd;
 #ifdef USE_TLS
-extern SSL_CTX    *g_ssl_ctx;
+extern SSL_CTX *g_ssl_ctx;
 #endif
 
 /* ── event mask helpers ─────────────────────────────────────────────── */
@@ -363,24 +370,26 @@ static inline void fd_watch(Worker *w, int fd, int events) {
 static inline void fd_unwatch(Worker *w, int fd, int events) {
     if (fd < 0 || fd >= g_config.max_connection) return;
     w->fd_mask[fd] &= (uint8_t)~events;
-    if (w->fd_mask[fd]) el_add(w->el, fd, w->fd_mask[fd]);
-    else                el_del(w->el, fd);
+    if (w->fd_mask[fd])
+        el_add(w->el, fd, w->fd_mask[fd]);
+    else
+        el_del(w->el, fd);
 }
 
 /* ── config / network ───────────────────────────────────────────────── */
 void parse_conf(const char *path);
 void set_nonblocking(int fd);
-int  tcp_connect(const char *ip, int port);
-int  tcp_connect_timeout(const char *ip, int port, int timeout_ms);
-int  create_tcp_listener(const char *ip, int port);
-int  create_unix_listener(const char *path);
+int tcp_connect(const char *ip, int port);
+int tcp_connect_timeout(const char *ip, int port, int timeout_ms);
+int create_tcp_listener(const char *ip, int port);
+int create_unix_listener(const char *path);
 #ifdef USE_TLS
-int  init_tls(void);
+int init_tls(void);
 #endif
 
 /* ── cluster ────────────────────────────────────────────────────────── */
 void fetch_cluster_nodes(void);
-int  key_slot(const char *key, int klen);
+int key_slot(const char *key, int klen);
 void topology_start_refresh_thread(void);
 static inline int topology_version_load(void) {
     return atomic_load_explicit(&g_topology_version, memory_order_acquire);
@@ -390,23 +399,15 @@ static inline int backend_resp3_active_load(void) {
 }
 
 /* ── RESP protocol ──────────────────────────────────────────────────── */
-int   resp_parse_header(const char *buf, int len,
-                        char *cmd, int *cmdlen_out,
-                        char *key, int *keylen_out,
-                        int *argc_out, int *total_cmd_len_out);
-int   resp_response_len(const char *buf, int len);
-int   resp_get_nth_arg(const char *buf, int len, int n,
-                       const char **out, int *out_len);
-int   resp_extract_keys(const char *buf, int len, const char *cmd,
-                        const char **key_ptrs, int *key_lens, int max_keys);
-int   resp_extract_all_args(const char *buf, int len,
-                             const char **args, int *arglens, int max);
-int   resp_extract_blocking_keys(const char *buf, int len, const char *cmd,
-                                  const char **kp, int *kl, int max_keys);
-int   resp_xread_has_block(const char *buf, int len);
-char *build_resp_cmd(const char *cmd, int cmdlen,
-                     const char **args, const int *arglens, int nargs,
-                     int *out_len);
+int resp_parse_header(const char *buf, int len, char *cmd, int *cmdlen_out, char *key, int *keylen_out, int *argc_out,
+                      int *total_cmd_len_out);
+int resp_response_len(const char *buf, int len);
+int resp_get_nth_arg(const char *buf, int len, int n, const char **out, int *out_len);
+int resp_extract_keys(const char *buf, int len, const char *cmd, const char **key_ptrs, int *key_lens, int max_keys);
+int resp_extract_all_args(const char *buf, int len, const char **args, int *arglens, int max);
+int resp_extract_blocking_keys(const char *buf, int len, const char *cmd, const char **kp, int *kl, int max_keys);
+int resp_xread_has_block(const char *buf, int len);
+char *build_resp_cmd(const char *cmd, int cmdlen, const char **args, const int *arglens, int nargs, int *out_len);
 /* ── RESP3 ─────────────────────────────────────────────────────────────
  * Convert a complete RESP3-shaped reply (buf[0..len)) into an equivalent
  * RESP2 byte sequence, written to a newly malloc'd *out (caller frees).
@@ -415,8 +416,7 @@ char *build_resp_cmd(const char *cmd, int cmdlen,
  * becomes `*-1\r\n` (nil array) instead of the default `$-1\r\n` (nil bulk)
  * -- see cmd_resp2_nil_array_depth(). Returns 0 on success, -1 if buf isn't
  * valid RESP (treat like any other malformed backend reply). */
-int resp3_downgrade(const char *buf, int len, int nil_array_depth,
-                     char **out, int *out_len);
+int resp3_downgrade(const char *buf, int len, int nil_array_depth, char **out, int *out_len);
 /* Same, but for a pub/sub push message: only ever called on a buffer whose
  * outermost type is `>` (push), which becomes `*` (array); no nil case
  * applies to push messages. */
@@ -434,43 +434,42 @@ int resp3_flatten_pairs(const char *buf, int len, char **out, int *out_len);
 int resp3_nest_pairs(const char *buf, int len, char **out, int *out_len);
 
 /* ── connection pool ────────────────────────────────────────────────── */
-void      pool_init(Worker *w, ConnPool *p, PoolType type, int node_idx, int db);
+void pool_init(Worker *w, ConnPool *p, PoolType type, int node_idx, int db);
 PoolConn *pool_acquire_nb(Worker *w, ConnPool *p);
-void      pool_enqueue_waiter(ConnPool *p, ClientConn *client);
-void      pool_remove_waiter(ConnPool *p, ClientConn *client);
-void      pool_release(Worker *w, PoolConn *c);
-void      pool_destroy_conn(Worker *w, PoolConn *c);
-DbGroup  *db_group_get(Worker *w, int db);
-void      worker_sync_topology(Worker *w);
+void pool_enqueue_waiter(ConnPool *p, ClientConn *client);
+void pool_remove_waiter(ConnPool *p, ClientConn *client);
+void pool_release(Worker *w, PoolConn *c);
+void pool_destroy_conn(Worker *w, PoolConn *c);
+DbGroup *db_group_get(Worker *w, int db);
+void worker_sync_topology(Worker *w);
 
 /* ── command routing ────────────────────────────────────────────────── */
 PoolType cmd_get_pool_type(const char *cmd);
-int      cmd_in_list(const char *cmd, const char **list);
-int      cmd_is_supported(const char *cmd);
-void     str_toupper(char *s);
+int cmd_in_list(const char *cmd, const char **list);
+int cmd_is_supported(const char *cmd);
+void str_toupper(char *s);
 PoolType route_command(ClientConn *client, const char *cmd);
 CmdClass classify_command(const char *cmd, PoolType pt);
-int      cmd_is_fanout(const char *cmd);
-void     record_last_cmd(ClientConn *client, const char *cmd, const char *key, int keylen);
+int cmd_is_fanout(const char *cmd);
+void record_last_cmd(ClientConn *client, const char *cmd, const char *key, int keylen);
 /* Which recursion depth (if any) of cmd's reply is semantically a nil
  * *array* rather than a nil bulk string -- feeds resp3_downgrade()'s
  * nil_array_depth argument directly. -1 = never (the common case). Most
  * affected commands are 0 (their own reply, e.g. a blocking command's
  * timeout); GEOPOS is the one exception needing 1 (see resp.c). Case-
  * insensitive. */
-int      cmd_resp2_nil_array_depth(const char *cmd);
+int cmd_resp2_nil_array_depth(const char *cmd);
 /* 0 = no structural fixup needed, 1 = resp3_flatten_pairs(), 2 =
  * resp3_nest_pairs() -- see cmd.c for the command lists and resp.c for
  * what each transform does. Case-insensitive. */
-int      cmd_resp3_pair_transform(const char *cmd);
+int cmd_resp3_pair_transform(const char *cmd);
 
 /* ── client helpers ─────────────────────────────────────────────────── */
 void client_send_error(Worker *w, ClientConn *client, const char *msg);
 void client_send_crossslot(ClientConn *client);
 void close_client(Worker *w, ClientConn *client);
 void resume_client_after_conn(Worker *w, ClientConn *client, PoolConn *conn);
-void client_recover_after_backend_error(Worker *w, ClientConn *client,
-                                         PoolConn *conn, const char *msg);
+void client_recover_after_backend_error(Worker *w, ClientConn *client, PoolConn *conn, const char *msg);
 /* Deliver a complete backend reply (buf[0..len)) to cl: runs it through
  * resp3_downgrade() first when cl is RESP2 but conn has been upgraded to
  * RESP3, otherwise copies it verbatim. Grows cl->wbuf as needed. Returns 0
@@ -479,8 +478,7 @@ void client_recover_after_backend_error(Worker *w, ClientConn *client,
  * any other bad backend response), or -2 if an OOM already forced this
  * function to call client_send_error()+close_client() itself (caller must
  * return immediately without touching cl or conn again). */
-int  deliver_backend_reply(Worker *w, ClientConn *cl, PoolConn *conn,
-                            const char *buf, int len);
+int deliver_backend_reply(Worker *w, ClientConn *cl, PoolConn *conn, const char *buf, int len);
 
 /* ── backend / client event handlers ───────────────────────────────── */
 void handle_backend_writable(Worker *w, PoolConn *conn);
@@ -489,8 +487,8 @@ void handle_client_writable(Worker *w, ClientConn *client);
 void handle_client_readable(Worker *w, ClientConn *client);
 
 /* ── fan-out handlers ───────────────────────────────────────────────── */
-int  topo_first_master(Worker *w);
-int  topo_all_masters(Worker *w, int *out);
+int topo_first_master(Worker *w);
+int topo_all_masters(Worker *w, int *out);
 void fanout_ctx_free(FanoutCtx *ctx);
 void handle_fanout_sub_readable(Worker *w, PoolConn *conn);
 void fanout_aggregate_and_reply(Worker *w, FanoutCtx *ctx);
@@ -502,8 +500,7 @@ void handle_multikey_complete(Worker *w, ClientConn *client, const char *cmd);
 /* ── pub/sub and blocking ───────────────────────────────────────────── */
 void handle_sub_conn_readable(Worker *w, PoolConn *conn);
 void handle_blocking_complete(Worker *w, ClientConn *client, const char *cmd);
-void handle_pubsub_cmd(Worker *w, ClientConn *client, int cmdlen,
-                       const char *cmd, const char *key, int keylen);
+void handle_pubsub_cmd(Worker *w, ClientConn *client, int cmdlen, const char *cmd, const char *key, int keylen);
 void handle_pubsub_inspect_cmd(Worker *w, ClientConn *client, int cmdlen);
 void handle_slowlog_cmd(Worker *w, ClientConn *client, int cmdlen);
 void handle_commandlog_cmd(Worker *w, ClientConn *client, int cmdlen);
@@ -512,26 +509,26 @@ void handle_script_cmd(Worker *w, ClientConn *client, int cmdlen);
 void handle_function_cmd(Worker *w, ClientConn *client, int cmdlen);
 void handle_command_cmd(Worker *w, ClientConn *client, int cmdlen);
 void handle_client_cmd(Worker *w, ClientConn *client, int cmdlen);
-int  client_name_check(Worker *w, ClientConn *client, const char *name, int namelen);
-int  client_set_name(Worker *w, ClientConn *client, const char *name, int namelen);
+int client_name_check(Worker *w, ClientConn *client, const char *name, int namelen);
+int client_set_name(Worker *w, ClientConn *client, const char *name, int namelen);
 void send_multibulk_reply(Worker *w, ClientConn *client, const char **lines, int n);
 
 /* ── ACL / AUTH ──────────────────────────────────────────────────────── */
 void handle_auth_cmd(Worker *w, ClientConn *client);
 void handle_acl_conn_readable(Worker *w, PoolConn *conn);
-int  acl_route_business_cmd(Worker *w, ClientConn *client, int node_idx);
+int acl_route_business_cmd(Worker *w, ClientConn *client, int node_idx);
 void acl_teardown_all(Worker *w, ClientConn *client);
 void handle_acl_cmd(Worker *w, ClientConn *client, int cmdlen);
 void handle_acl_help_readable(Worker *w, PoolConn *conn);
 
 /* ── RESP3 (HELLO command + per-connection upgrade handshake) ──────────
  * See src/hello.c. */
-int  resp3_conn_needs_upgrade(PoolConn *conn);
+int resp3_conn_needs_upgrade(PoolConn *conn);
 /* Both return 0 on success, -1 on allocation failure (treat exactly like any
  * other OOM at that call site -- see hello.c for why this can't block). */
-int  resp3_start_conn_upgrade(Worker *w, PoolConn *conn);
-int  resp3_start_probe(Worker *w, PoolConn *conn);
-int  resp3_defer_append(PoolConn *conn, const char *data, int len);
+int resp3_start_conn_upgrade(Worker *w, PoolConn *conn);
+int resp3_start_probe(Worker *w, PoolConn *conn);
+int resp3_defer_append(PoolConn *conn, const char *data, int len);
 void handle_resp3_handshake_readable(Worker *w, PoolConn *conn);
 void handle_hello_cmd(Worker *w, ClientConn *client, int cmdlen);
 void handle_hello_auth_reply(Worker *w, PoolConn *conn, ClientConn *cl, int rlen);

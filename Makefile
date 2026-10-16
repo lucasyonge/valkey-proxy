@@ -80,5 +80,14 @@ test: run-test
 clean:
 	rm -f $(OBJS) $(TARGET) $(POOL_TARGET) run-test
 
-.PHONY: clean test
+# ── formatting ───────────────────────────────────────────────────────────
+FORMAT_SRCS = $(shell find src test -name '*.[ch]')
+
+format:
+	clang-format -i $(FORMAT_SRCS)
+
+format-check:
+	clang-format --dry-run --Werror $(FORMAT_SRCS)
+
+.PHONY: clean test format format-check
 

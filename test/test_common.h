@@ -96,7 +96,10 @@ static char *resp_next_str(int fd, char *out, int outsz) {
     }
     if (t == '$') {
         int n = atoi(line + 1);
-        if (n < 0) { snprintf(out, outsz, "(nil)"); return out; }
+        if (n < 0) {
+            snprintf(out, outsz, "(nil)");
+            return out;
+        }
         int r = (n < outsz - 1) ? n : outsz - 1;
         if (read_exact(fd, out, r) < 0) return NULL;
         out[r] = '\0';
@@ -128,10 +131,12 @@ static __attribute__((unused)) int resp_next_binary(int fd, char *out, int outsz
     int r = (n < outsz) ? n : outsz;
     if (read_exact(fd, out, r) < 0) return -1;
     if (n > r) {
-        char tmp[256]; int rem = n - r;
+        char tmp[256];
+        int rem = n - r;
         while (rem > 0) {
             int c = rem < (int)sizeof(tmp) ? rem : (int)sizeof(tmp);
-            read_exact(fd, tmp, c); rem -= c;
+            read_exact(fd, tmp, c);
+            rem -= c;
         }
     }
     char crlf[2];
@@ -157,13 +162,15 @@ static __attribute__((unused)) int resp_skip_reply(int fd) {
     if (read_line(fd, line, sizeof(line)) < 0) return -1;
     if (line[0] == '*') {
         int n = atoi(line + 1);
-        for (int i = 0; i < n; i++) if (resp_skip_reply(fd) < 0) return -1;
+        for (int i = 0; i < n; i++)
+            if (resp_skip_reply(fd) < 0) return -1;
         return 0;
     }
     if (line[0] == '$') {
         int n = atoi(line + 1);
         if (n < 0) return 0;
-        char tmp[1024]; int rem = n;
+        char tmp[1024];
+        int rem = n;
         while (rem > 0) {
             int c = rem < (int)sizeof(tmp) ? rem : (int)sizeof(tmp);
             if (read_exact(fd, tmp, c) < 0) return -1;
@@ -202,36 +209,45 @@ static int read_raw_reply_impl(int fd, char *buf, int bufsz) {
     int linelen = (int)strlen(line);
     if (linelen + 2 >= bufsz) return -1;
     int off = 0;
-    memcpy(buf + off, line, (size_t)linelen); off += linelen;
-    buf[off++] = '\r'; buf[off++] = '\n';
+    memcpy(buf + off, line, (size_t)linelen);
+    off += linelen;
+    buf[off++] = '\r';
+    buf[off++] = '\n';
 
     switch (line[0]) {
-    case '+': case '-': case ':':
-    case '#': case ',': case '_': case '(':
-        return off; /* line-only types: read_line already consumed it all */
-    case '$': case '=': {
-        int n = atoi(line + 1);
-        if (n < 0) return off; /* nil bulk / nil verbatim (shouldn't happen) */
-        if (off + n + 2 >= bufsz) return -1;
-        if (read_exact(fd, buf + off, n) < 0) return -1;
-        off += n;
-        if (read_exact(fd, buf + off, 2) < 0) return -1;
-        off += 2;
-        return off;
-    }
-    case '*': case '~': case '>': case '%': {
-        int cnt = atoi(line + 1);
-        if (cnt < 0) return off; /* nil array */
-        int nelem = (line[0] == '%') ? cnt * 2 : cnt;
-        for (int i = 0; i < nelem; i++) {
-            int n = read_raw_reply_impl(fd, buf + off, bufsz - off);
-            if (n < 0) return -1;
+        case '+':
+        case '-':
+        case ':':
+        case '#':
+        case ',':
+        case '_':
+        case '(': return off; /* line-only types: read_line already consumed it all */
+        case '$':
+        case '=': {
+            int n = atoi(line + 1);
+            if (n < 0) return off; /* nil bulk / nil verbatim (shouldn't happen) */
+            if (off + n + 2 >= bufsz) return -1;
+            if (read_exact(fd, buf + off, n) < 0) return -1;
             off += n;
+            if (read_exact(fd, buf + off, 2) < 0) return -1;
+            off += 2;
+            return off;
         }
-        return off;
-    }
-    default:
-        return -1;
+        case '*':
+        case '~':
+        case '>':
+        case '%': {
+            int cnt = atoi(line + 1);
+            if (cnt < 0) return off; /* nil array */
+            int nelem = (line[0] == '%') ? cnt * 2 : cnt;
+            for (int i = 0; i < nelem; i++) {
+                int n = read_raw_reply_impl(fd, buf + off, bufsz - off);
+                if (n < 0) return -1;
+                off += n;
+            }
+            return off;
+        }
+        default: return -1;
     }
 }
 
@@ -265,7 +281,8 @@ static __attribute__((unused)) char *proxy_cmd(int fd, char *out, int outsz, int
     }
     va_end(ap);
     if (resp_send_raw(fd, argc, args, arglens) < 0) {
-        snprintf(out, outsz, "(send-error)"); return NULL;
+        snprintf(out, outsz, "(send-error)");
+        return NULL;
     }
     return resp_next_str(fd, out, outsz);
 }
@@ -296,7 +313,8 @@ static __attribute__((unused)) long long proxy_cmd_first_int(int fd, int argc, .
         if (read_line(fd, line, sizeof(line)) < 0) return -9999;
         start = 1;
     } else {
-        n = 1; start = 0;
+        n = 1;
+        start = 0;
     }
 
     if (line[0] != ':') return -9999;
@@ -308,7 +326,10 @@ static __attribute__((unused)) long long proxy_cmd_first_int(int fd, int argc, .
         if (read_line(fd, tmp, sizeof(tmp)) < 0) break;
         if (tmp[0] == '$') {
             int len = atoi(tmp + 1);
-            if (len > 0) { char t2[1024]; read_exact(fd, t2, len + 2); }
+            if (len > 0) {
+                char t2[1024];
+                read_exact(fd, t2, len + 2);
+            }
         }
     }
     return val;
@@ -318,17 +339,23 @@ static __attribute__((unused)) long long proxy_cmd_first_int(int fd, int argc, .
 
 static int proxy_connect(const char *host, int port) {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (fd < 0) { perror("socket"); return -1; }
+    if (fd < 0) {
+        perror("socket");
+        return -1;
+    }
     struct sockaddr_in sa;
     memset(&sa, 0, sizeof(sa));
-    sa.sin_family      = AF_INET;
-    sa.sin_port        = htons((uint16_t)port);
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons((uint16_t)port);
     if (inet_pton(AF_INET, host, &sa.sin_addr) <= 0) {
         fprintf(stderr, "Invalid address: %s\n", host);
-        close(fd); return -1;
+        close(fd);
+        return -1;
     }
     if (connect(fd, (struct sockaddr *)&sa, sizeof(sa)) != 0) {
-        perror("connect"); close(fd); return -1;
+        perror("connect");
+        close(fd);
+        return -1;
     }
     return fd;
 }
@@ -343,12 +370,15 @@ extern const char *g_test_acl_ro_user, *g_test_acl_ro_pass;
 
 #define SKIP(label) printf("  [SKIP] %s (needs --cluster=<host:port>)\n", (label))
 
-#define CHECK(cond, label, pass, fail) do {             \
-    if (cond) {                                          \
-        printf("  [PASS] %s\n", (label)); (*(pass))++;  \
-    } else {                                             \
-        printf("  [FAIL] %s\n", (label)); (*(fail))++;  \
-    }                                                    \
-} while (0)
+#define CHECK(cond, label, pass, fail)        \
+    do {                                      \
+        if (cond) {                           \
+            printf("  [PASS] %s\n", (label)); \
+            (*(pass))++;                      \
+        } else {                              \
+            printf("  [FAIL] %s\n", (label)); \
+            (*(fail))++;                      \
+        }                                     \
+    } while (0)
 
 #endif /* TEST_COMMON_H */

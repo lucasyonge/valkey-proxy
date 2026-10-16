@@ -33,10 +33,12 @@ static int backend_send_hello3(Worker *w, PoolConn *conn) {
     if (conn->wbuf_cap < len) {
         char *tmp = realloc(conn->wbuf, (size_t)len);
         if (!tmp) return -1;
-        conn->wbuf = tmp; conn->wbuf_cap = len;
+        conn->wbuf = tmp;
+        conn->wbuf_cap = len;
     }
     memcpy(conn->wbuf, HELLO3, (size_t)len);
-    conn->wbuf_len = len; conn->wbuf_off = 0;
+    conn->wbuf_len = len;
+    conn->wbuf_off = 0;
     conn->resp3_handshake = 1;
     if (conn->fd >= 0 && conn->fd < g_config.max_connection) w->backend_map[conn->fd] = conn;
     fd_watch(w, conn->fd, EL_WRITABLE);
@@ -62,7 +64,8 @@ int resp3_defer_append(PoolConn *conn, const char *data, int len) {
         int nc = conn->resp3_deferred_len + len + 256;
         char *tmp = realloc(conn->resp3_deferred_cmd, (size_t)nc);
         if (!tmp) return -1;
-        conn->resp3_deferred_cmd = tmp; conn->resp3_deferred_cap = nc;
+        conn->resp3_deferred_cmd = tmp;
+        conn->resp3_deferred_cap = nc;
     }
     memcpy(conn->resp3_deferred_cmd + conn->resp3_deferred_len, data, (size_t)len);
     conn->resp3_deferred_len += len;
@@ -75,19 +78,23 @@ int resp3_defer_append(PoolConn *conn, const char *data, int len) {
  * error elsewhere (handle_fanout_sub_readable() in fanout.c,
  * client_recover_after_backend_error() in client.c, handle_sub_conn_readable()'s
  * close_client() in pubsub.c). */
-static void resp3_handshake_fail(Worker *w, PoolConn *conn, ClientConn *cl,
-                                  int is_fanout, const char *msg) {
+static void resp3_handshake_fail(Worker *w, PoolConn *conn, ClientConn *cl, int is_fanout, const char *msg) {
     if (is_fanout) {
         FanoutSub *sub = conn->fanout_sub;
         FanoutCtx *ctx = sub->ctx;
-        sub->error = 1; sub->done = 1; conn->fanout_sub = NULL;
+        sub->error = 1;
+        sub->done = 1;
+        conn->fanout_sub = NULL;
         pool_destroy_conn(w, conn);
         sub->conn = NULL;
-        ctx->had_error = 1; ctx->ndone++;
+        ctx->had_error = 1;
+        ctx->ndone++;
         if (ctx->ndone == ctx->nsubs) fanout_aggregate_and_reply(w, ctx);
     } else if (cl) {
-        if (conn->pool->type == POOL_SUBSCRIPTION) close_client(w, cl);
-        else client_recover_after_backend_error(w, cl, conn, msg);
+        if (conn->pool->type == POOL_SUBSCRIPTION)
+            close_client(w, cl);
+        else
+            client_recover_after_backend_error(w, cl, conn, msg);
     } else {
         pool_destroy_conn(w, conn);
     }
@@ -110,10 +117,10 @@ static int hello_put_bulk(char *buf, int off, int cap, const char *s, int slen) 
  * a plain array (*14) -- matching how real Valkey answers HELLO on however
  * that connection ends up speaking after the switch. */
 static void build_and_send_hello_reply(Worker *w, ClientConn *client) {
-    static const char *SERVER  = "valkey";
+    static const char *SERVER = "valkey";
     static const char *VERSION = "7.4.0";
-    static const char *MODE    = "cluster";
-    static const char *ROLE    = "master";
+    static const char *MODE = "cluster";
+    static const char *ROLE = "master";
 
     char buf[512];
     int off = snprintf(buf, sizeof(buf), client->resp == 3 ? "%%7\r\n" : "*14\r\n");
@@ -135,12 +142,20 @@ static void build_and_send_hello_reply(Worker *w, ClientConn *client) {
 
     if (client->wbuf_cap < off) {
         char *tmp = realloc(client->wbuf, (size_t)off);
-        if (!tmp) { client_send_error(w, client, "out of memory"); close_client(w, client); return; }
-        client->wbuf = tmp; client->wbuf_cap = off;
+        if (!tmp) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
+        client->wbuf = tmp;
+        client->wbuf_cap = off;
     }
     memcpy(client->wbuf, buf, (size_t)off);
-    client->wbuf_len = off; client->wbuf_off = 0;
-    client->pbuf_len = 0; client->hbuf_len = 0; client->using_pbuf = 0;
+    client->wbuf_len = off;
+    client->wbuf_off = 0;
+    client->pbuf_len = 0;
+    client->hbuf_len = 0;
+    client->using_pbuf = 0;
     client->state = CS_WRITING_RESP;
     fd_watch(w, client->fd, EL_WRITABLE);
 }
@@ -162,8 +177,10 @@ void hello_auth_conn_forget(ClientConn *client) {
     PoolConn *c = client->hello_auth_conn;
     if (c) {
         c->waiting_client = NULL;
-        c->acl_authenticating = 0; c->acl_is_login_probe = 0;
-        c->acl_hello_login = 0; c->acl_hello_resp3 = 0;
+        c->acl_authenticating = 0;
+        c->acl_is_login_probe = 0;
+        c->acl_hello_login = 0;
+        c->acl_hello_resp3 = 0;
     }
     client->hello_auth_conn = NULL;
     hello_pending_clear(client);
@@ -176,11 +193,11 @@ static void hello_commit(Worker *w, ClientConn *cl, int resp) {
     if (cl->hello_pending_auth_default) {
         if (cl->acl_authenticated) acl_teardown_all(w, cl);
         cl->acl_authenticated = 0;
-        cl->acl_userlen = 0; cl->acl_passlen = 0;
+        cl->acl_userlen = 0;
+        cl->acl_passlen = 0;
     }
     /* Already validated by handle_hello_cmd(), so this can't fail. */
-    if (cl->hello_pending_setname)
-        client_set_name(w, cl, cl->hello_pending_name, cl->hello_pending_namelen);
+    if (cl->hello_pending_setname) client_set_name(w, cl, cl->hello_pending_name, cl->hello_pending_namelen);
     hello_pending_clear(cl);
     if (resp) cl->resp = resp;
     build_and_send_hello_reply(w, cl);
@@ -191,22 +208,35 @@ void handle_resp3_handshake_readable(Worker *w, PoolConn *conn) {
     for (;;) {
         if (conn->rbuf_cap - conn->rbuf_len < 4096) {
             int nc = conn->rbuf_cap ? conn->rbuf_cap * 2 : 4096;
-            if (nc > MAX_RESP_SIZE) { rlen = -1; break; }
+            if (nc > MAX_RESP_SIZE) {
+                rlen = -1;
+                break;
+            }
             char *tmp = realloc(conn->rbuf, (size_t)nc);
-            if (!tmp) { rlen = -1; break; }
-            conn->rbuf = tmp; conn->rbuf_cap = nc;
+            if (!tmp) {
+                rlen = -1;
+                break;
+            }
+            conn->rbuf = tmp;
+            conn->rbuf_cap = nc;
         }
-        ssize_t n = read(conn->fd, conn->rbuf + conn->rbuf_len,
-                         (size_t)(conn->rbuf_cap - conn->rbuf_len));
-        if (n < 0) { if (errno == EAGAIN) return; rlen = -1; break; }
-        if (n == 0) { rlen = -1; break; }
+        ssize_t n = read(conn->fd, conn->rbuf + conn->rbuf_len, (size_t)(conn->rbuf_cap - conn->rbuf_len));
+        if (n < 0) {
+            if (errno == EAGAIN) return;
+            rlen = -1;
+            break;
+        }
+        if (n == 0) {
+            rlen = -1;
+            break;
+        }
         conn->rbuf_len += (int)n;
         rlen = resp_response_len(conn->rbuf, conn->rbuf_len);
         if (rlen != 0) break;
         /* rlen==0: incomplete, keep draining the socket */
     }
 
-    int is_probe  = conn->resp3_probe;
+    int is_probe = conn->resp3_probe;
     int is_fanout = (conn->fanout_sub != NULL);
     ClientConn *cl = conn->waiting_client;
     conn->resp3_handshake = 0;
@@ -242,10 +272,12 @@ void handle_resp3_handshake_readable(Worker *w, PoolConn *conn) {
                     client_recover_after_backend_error(w, cl, conn, "out of memory");
                     return;
                 }
-                cl->wbuf = tmp; cl->wbuf_cap = rlen;
+                cl->wbuf = tmp;
+                cl->wbuf_cap = rlen;
             }
             memcpy(cl->wbuf, conn->rbuf, (size_t)rlen);
-            cl->wbuf_len = rlen; cl->wbuf_off = 0;
+            cl->wbuf_len = rlen;
+            cl->wbuf_off = 0;
             conn->rbuf_len = 0;
 
             fd_unwatch(w, conn->fd, EL_READABLE);
@@ -295,11 +327,14 @@ void handle_resp3_handshake_readable(Worker *w, PoolConn *conn) {
                 resp3_handshake_fail(w, conn, cl, is_fanout, "out of memory");
                 return;
             }
-            conn->wbuf = tmp; conn->wbuf_cap = conn->resp3_deferred_len;
+            conn->wbuf = tmp;
+            conn->wbuf_cap = conn->resp3_deferred_len;
         }
         memcpy(conn->wbuf, conn->resp3_deferred_cmd, (size_t)conn->resp3_deferred_len);
-        conn->wbuf_len = conn->resp3_deferred_len; conn->wbuf_off = 0;
-        free(conn->resp3_deferred_cmd); conn->resp3_deferred_cmd = NULL;
+        conn->wbuf_len = conn->resp3_deferred_len;
+        conn->wbuf_off = 0;
+        free(conn->resp3_deferred_cmd);
+        conn->resp3_deferred_cmd = NULL;
         conn->resp3_deferred_len = conn->resp3_deferred_cap = 0;
         fd_watch(w, conn->fd, EL_WRITABLE);
     } else if (cl) {
@@ -318,11 +353,13 @@ static void hello_send_noproto(ClientConn *client) {
 static int hello_protover_is_int(const char *s, int len) {
     char tmp[32];
     if (len <= 0 || len >= (int)sizeof(tmp)) return 0;
-    memcpy(tmp, s, (size_t)len); tmp[len] = '\0';
+    memcpy(tmp, s, (size_t)len);
+    tmp[len] = '\0';
     if (len == 1 && tmp[0] == '0') return 1;
     const char *p = tmp[0] == '-' ? tmp + 1 : tmp;
     if (*p < '1' || *p > '9') return 0;
-    for (const char *q = p + 1; *q; q++) if (*q < '0' || *q > '9') return 0;
+    for (const char *q = p + 1; *q; q++)
+        if (*q < '0' || *q > '9') return 0;
     errno = 0;
     (void)strtoll(tmp, NULL, 10);
     return errno != ERANGE;
@@ -341,7 +378,11 @@ static int hello_protover_is_int(const char *s, int len) {
 static void hello_start_auth_login(Worker *w, ClientConn *client) {
     int ni = topo_first_master(w);
     DbGroup *grp = db_group_get(w, client->db);
-    if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+    if (!grp) {
+        client_send_error(w, client, "db group error");
+        close_client(w, client);
+        return;
+    }
     ConnPool *pool = &grp->node_pools[ni].pools[POOL_ACL];
     PoolConn *conn = pool_acquire_nb(w, pool);
     if (!conn) {
@@ -352,27 +393,36 @@ static void hello_start_auth_login(Worker *w, ClientConn *client) {
     }
 
     int ver = client->hello_auth_protover;
-    int len; char *cmd;
+    int len;
+    char *cmd;
     if (ver == 3) {
-        const char *args[4] = { "3", "AUTH", client->hello_auth_user, client->hello_auth_pass };
-        int arglens[4] = { 1, 4, client->hello_auth_userlen, client->hello_auth_passlen };
+        const char *args[4] = {"3", "AUTH", client->hello_auth_user, client->hello_auth_pass};
+        int arglens[4] = {1, 4, client->hello_auth_userlen, client->hello_auth_passlen};
         cmd = build_resp_cmd("HELLO", 5, args, arglens, 4, &len);
     } else {
-        const char *args[2] = { client->hello_auth_user, client->hello_auth_pass };
-        int arglens[2] = { client->hello_auth_userlen, client->hello_auth_passlen };
+        const char *args[2] = {client->hello_auth_user, client->hello_auth_pass};
+        int arglens[2] = {client->hello_auth_userlen, client->hello_auth_passlen};
         cmd = build_resp_cmd("AUTH", 4, args, arglens, 2, &len);
     }
     if (cmd && conn->wbuf_cap < len) {
         char *tmp = realloc(conn->wbuf, (size_t)len);
-        if (!tmp) { free(cmd); cmd = NULL; }
-        else { conn->wbuf = tmp; conn->wbuf_cap = len; }
+        if (!tmp) {
+            free(cmd);
+            cmd = NULL;
+        } else {
+            conn->wbuf = tmp;
+            conn->wbuf_cap = len;
+        }
     }
     if (!cmd) {
         pool_destroy_conn(w, conn);
-        client_send_error(w, client, "out of memory"); close_client(w, client); return;
+        client_send_error(w, client, "out of memory");
+        close_client(w, client);
+        return;
     }
     memcpy(conn->wbuf, cmd, (size_t)len);
-    conn->wbuf_len = len; conn->wbuf_off = 0;
+    conn->wbuf_len = len;
+    conn->wbuf_off = 0;
     free(cmd);
 
     conn->waiting_client = client;
@@ -401,16 +451,22 @@ void handle_hello_auth_reply(Worker *w, PoolConn *conn, ClientConn *cl, int rlen
             char *tmp = realloc(cl->wbuf, (size_t)rlen);
             if (!tmp) {
                 conn->rbuf_len = 0;
-                client_send_error(w, cl, "out of memory"); close_client(w, cl); return;
+                client_send_error(w, cl, "out of memory");
+                close_client(w, cl);
+                return;
             }
-            cl->wbuf = tmp; cl->wbuf_cap = rlen;
+            cl->wbuf = tmp;
+            cl->wbuf_cap = rlen;
         }
         memcpy(cl->wbuf, conn->rbuf, (size_t)rlen);
-        cl->wbuf_len = rlen; cl->wbuf_off = 0;
+        cl->wbuf_len = rlen;
+        cl->wbuf_off = 0;
         conn->rbuf_len = 0;
         hello_auth_conn_forget(cl);
         pool_destroy_conn(w, conn);
-        cl->pbuf_len = 0; cl->hbuf_len = 0; cl->using_pbuf = 0;
+        cl->pbuf_len = 0;
+        cl->hbuf_len = 0;
+        cl->using_pbuf = 0;
         cl->state = CS_WRITING_RESP;
         fd_watch(w, cl->fd, EL_WRITABLE);
         return;
@@ -418,8 +474,10 @@ void handle_hello_auth_reply(Worker *w, PoolConn *conn, ClientConn *cl, int rlen
 
     conn->rbuf_len = 0;
     int sent_hello3 = conn->acl_hello_resp3;
-    conn->acl_authenticating = 0; conn->acl_is_login_probe = 0;
-    conn->acl_hello_login = 0; conn->acl_hello_resp3 = 0;
+    conn->acl_authenticating = 0;
+    conn->acl_is_login_probe = 0;
+    conn->acl_hello_login = 0;
+    conn->acl_hello_resp3 = 0;
     if (sent_hello3) {
         conn->resp3 = 1;
         atomic_store_explicit(&g_backend_resp3_active, 1, memory_order_release);
@@ -457,7 +515,8 @@ void handle_hello_auth_reply(Worker *w, PoolConn *conn, ClientConn *cl, int rlen
 void handle_hello_cmd(Worker *w, ClientConn *client, int cmdlen) {
     (void)cmdlen;
 
-    const char *protover; int protover_len;
+    const char *protover;
+    int protover_len;
     int has_protover = resp_get_nth_arg(client->hbuf, client->hbuf_len, 1, &protover, &protover_len);
     if (has_protover && !hello_protover_is_int(protover, protover_len)) {
         client_send_error(w, client, "Protocol version is not an integer or out of range");
@@ -470,9 +529,12 @@ void handle_hello_cmd(Worker *w, ClientConn *client, int cmdlen) {
         return;
     }
 
-    const char *name = NULL; int namelen = 0;
-    const char *user = NULL, *pass = NULL; int userlen = 0, passlen = 0;
-    const char *opt, *a1; int optlen, a1len;
+    const char *name = NULL;
+    int namelen = 0;
+    const char *user = NULL, *pass = NULL;
+    int userlen = 0, passlen = 0;
+    const char *opt, *a1;
+    int optlen, a1len;
     for (int j = 2; resp_get_nth_arg(client->hbuf, client->hbuf_len, j, &opt, &optlen); j++) {
         if (optlen == 4 && !strncasecmp(opt, "AUTH", 4) &&
             resp_get_nth_arg(client->hbuf, client->hbuf_len, j + 1, &user, &userlen) &&
@@ -480,12 +542,12 @@ void handle_hello_cmd(Worker *w, ClientConn *client, int cmdlen) {
             j += 2;
         } else if (optlen == 7 && !strncasecmp(opt, "SETNAME", 7) &&
                    resp_get_nth_arg(client->hbuf, client->hbuf_len, j + 1, &a1, &a1len)) {
-            name = a1; namelen = a1len;
+            name = a1;
+            namelen = a1len;
             j += 1;
         } else {
             char msg[128];
-            snprintf(msg, sizeof(msg), "Syntax error in HELLO option '%.*s'",
-                     optlen < 64 ? optlen : 64, opt);
+            snprintf(msg, sizeof(msg), "Syntax error in HELLO option '%.*s'", optlen < 64 ? optlen : 64, opt);
             client_send_error(w, client, msg);
             client->hbuf_len = 0;
             return;
@@ -493,8 +555,7 @@ void handle_hello_cmd(Worker *w, ClientConn *client, int cmdlen) {
     }
 
     if (name && client_name_check(w, client, name, namelen) < 0) return;
-    if (user && (userlen >= (int)sizeof(client->acl_user) ||
-                 passlen >= (int)sizeof(client->acl_pass))) {
+    if (user && (userlen >= (int)sizeof(client->acl_user) || passlen >= (int)sizeof(client->acl_pass))) {
         client_send_error(w, client, "invalid username/password length");
         client->hbuf_len = 0;
         return;
@@ -540,7 +601,11 @@ void handle_hello_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * failed and this is a retry): probe one backend node for real. */
     int ni = topo_first_master(w);
     DbGroup *grp = db_group_get(w, client->db);
-    if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+    if (!grp) {
+        client_send_error(w, client, "db group error");
+        close_client(w, client);
+        return;
+    }
     ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
     PoolConn *conn = pool_acquire_nb(w, pool);
     if (!conn) {

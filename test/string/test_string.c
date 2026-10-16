@@ -34,7 +34,10 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 5, "SET", "tc:str:setex_opt", "withex", "EX", "100");
     CHECK(strcmp(r, "+OK") == 0, "SET EX: returns +OK", pass, fail);
     proxy_cmd(fd, r, sizeof(r), 2, "TTL", "tc:str:setex_opt");
-    { long long v = atoll(r + 1); CHECK(r[0] == ':' && v > 0 && v <= 100, "SET EX: TTL in (0,100]", pass, fail); }
+    {
+        long long v = atoll(r + 1);
+        CHECK(r[0] == ':' && v > 0 && v <= 100, "SET EX: TTL in (0,100]", pass, fail);
+    }
 
     /* ── SETNX ─────────────────────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 3, "SETNX", "tc:str:nx", "val1");
@@ -54,13 +57,19 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, "exval") == 0, "SETEX: stored value correct", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 2, "TTL", "tc:str:ex");
-    { long long v = atoll(r + 1); CHECK(r[0] == ':' && v > 0 && v <= 100, "SETEX: TTL in (0,100]", pass, fail); }
+    {
+        long long v = atoll(r + 1);
+        CHECK(r[0] == ':' && v > 0 && v <= 100, "SETEX: TTL in (0,100]", pass, fail);
+    }
 
     /* GETEX with EX option updates TTL */
     proxy_cmd(fd, r, sizeof(r), 4, "GETEX", "tc:str:ex", "EX", "200");
     CHECK(strcmp(r, "exval") == 0, "GETEX EX: returns value", pass, fail);
     proxy_cmd(fd, r, sizeof(r), 2, "TTL", "tc:str:ex");
-    { long long v = atoll(r + 1); CHECK(r[0] == ':' && v > 100 && v <= 200, "GETEX EX: updated TTL in (100,200]", pass, fail); }
+    {
+        long long v = atoll(r + 1);
+        CHECK(r[0] == ':' && v > 100 && v <= 200, "GETEX EX: updated TTL in (100,200]", pass, fail);
+    }
 
     /* GETEX PERSIST removes TTL */
     proxy_cmd(fd, r, sizeof(r), 3, "GETEX", "tc:str:ex", "PERSIST");
@@ -80,7 +89,10 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, "pexval") == 0, "PSETEX: value stored correctly", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 2, "PTTL", "tc:str:pex");
-    { long long v = atoll(r + 1); CHECK(r[0] == ':' && v > 0 && v <= 10000, "PSETEX: PTTL in (0,10000]", pass, fail); }
+    {
+        long long v = atoll(r + 1);
+        CHECK(r[0] == ':' && v > 0 && v <= 10000, "PSETEX: PTTL in (0,10000]", pass, fail);
+    }
 
     /* ── GETSET (deprecated but still supported) ───────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 3, "SET", "tc:str:gs", "oldval");
@@ -153,7 +165,10 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, ":16") == 0, "INCRBY: 11+5=16", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 3, "INCRBYFLOAT", "tc:str:ctr", "1.5");
-    { double v = atof(r); CHECK(v > 17.4 && v < 17.6, "INCRBYFLOAT: 16+1.5=17.5", pass, fail); }
+    {
+        double v = atof(r);
+        CHECK(v > 17.4 && v < 17.6, "INCRBYFLOAT: 16+1.5=17.5", pass, fail);
+    }
 
     /* INCR on nonexistent key (initialises to 0 then increments) */
     proxy_cmd(fd, r, sizeof(r), 2, "INCR", "tc:str:incr:new");
@@ -196,7 +211,11 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
     resp_send(fd, 2, "MGET", "{tc:str:mg:1}k");
     resp_next_str(fd, r, sizeof(r));
     CHECK(strcmp(r, "*1") == 0, "MGET single key: returns *1 array", pass, fail);
-    { char v[64]; resp_next_str(fd, v, sizeof(v)); CHECK(strcmp(v, "mv1") == 0, "MGET single: value is mv1", pass, fail); }
+    {
+        char v[64];
+        resp_next_str(fd, v, sizeof(v));
+        CHECK(strcmp(v, "mv1") == 0, "MGET single: value is mv1", pass, fail);
+    }
 
     /* multiple keys across different slots (fanout) */
     resp_send(fd, 4, "MGET", "{tc:str:mg:1}k", "{tc:str:mg:2}k", "{tc:str:mg:3}k");
@@ -221,9 +240,10 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
         resp_next_str(fd, v1, sizeof(v1));
         resp_next_str(fd, v2, sizeof(v2));
         resp_next_str(fd, v3, sizeof(v3));
-        CHECK(strcmp(v1, "mv1") == 0,   "MGET 3 keys in cross-slot with 1 missing: k1 value correct", pass, fail);
-        CHECK(strcmp(v2, "(nil)") == 0, "MGET 3 keys in cross-slot with 1 missing: absent key returns nil in position", pass, fail);
-        CHECK(strcmp(v3, "mv3") == 0,   "MGET 3 keys in cross-slot with 1 missing: k3 value correct", pass, fail);
+        CHECK(strcmp(v1, "mv1") == 0, "MGET 3 keys in cross-slot with 1 missing: k1 value correct", pass, fail);
+        CHECK(strcmp(v2, "(nil)") == 0, "MGET 3 keys in cross-slot with 1 missing: absent key returns nil in position",
+              pass, fail);
+        CHECK(strcmp(v3, "mv3") == 0, "MGET 3 keys in cross-slot with 1 missing: k3 value correct", pass, fail);
     }
 
     /* ── MSET (multi-key fan-out) ───────────────────────────────────────── */
@@ -232,10 +252,8 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, "+OK") == 0, "MSET single pair: returns +OK", pass, fail);
 
     /* multiple pairs across different slots (fanout) — different hash tags */
-    proxy_cmd(fd, r, sizeof(r), 7, "MSET",
-              "{tc:str:ms:1}k", "msv1",
-              "{tc:str:ms:2}k", "msv2",
-              "{tc:str:ms:3}k", "msv3");
+    proxy_cmd(fd, r, sizeof(r), 7, "MSET", "{tc:str:ms:1}k", "msv1", "{tc:str:ms:2}k", "msv2", "{tc:str:ms:3}k",
+              "msv3");
     CHECK(strcmp(r, "+OK") == 0, "MSET 3 key-value pairs in cross-slot: returns +OK", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 2, "GET", "{tc:str:ms:1}k");
@@ -247,9 +265,7 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
 
     /* ── MSETNX: all keys must share one slot ───────────────────────────── */
     /* same slot: hash tags ensure same slot */
-    proxy_cmd(fd, r, sizeof(r), 5, "MSETNX",
-              "{tc:str:ssnx}k1", "v1",
-              "{tc:str:ssnx}k2", "v2");
+    proxy_cmd(fd, r, sizeof(r), 5, "MSETNX", "{tc:str:ssnx}k1", "v1", "{tc:str:ssnx}k2", "v2");
     CHECK(strcmp(r, ":1") == 0, "MSETNX same-slot: all new keys returns 1", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 2, "GET", "{tc:str:ssnx}k1");
@@ -258,9 +274,7 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, "v2") == 0, "MSETNX same-slot: k2 set correctly", pass, fail);
 
     /* MSETNX when any key already exists: nothing is set */
-    proxy_cmd(fd, r, sizeof(r), 5, "MSETNX",
-              "{tc:str:ssnx}k1", "newv1",
-              "{tc:str:ssnx}k3", "v3");
+    proxy_cmd(fd, r, sizeof(r), 5, "MSETNX", "{tc:str:ssnx}k1", "newv1", "{tc:str:ssnx}k3", "v3");
     CHECK(strcmp(r, ":0") == 0, "MSETNX same-slot: existing key causes 0 (all-or-nothing)", pass, fail);
     proxy_cmd(fd, r, sizeof(r), 2, "EXISTS", "{tc:str:ssnx}k3");
     CHECK(strcmp(r, ":0") == 0, "MSETNX: k3 not created when k1 already exists", pass, fail);
@@ -268,9 +282,7 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, "v1") == 0, "MSETNX: k1 value unchanged", pass, fail);
 
     /* cross-slot: must return CROSSSLOT error */
-    proxy_cmd(fd, r, sizeof(r), 5, "MSETNX",
-              "{tc:str:nx:a}key", "va",
-              "{tc:str:nx:b}key", "vb");
+    proxy_cmd(fd, r, sizeof(r), 5, "MSETNX", "{tc:str:nx:a}key", "va", "{tc:str:nx:b}key", "vb");
     CHECK(r[0] == '-', "MSETNX cross-slot: returns error (CROSSSLOT)", pass, fail);
 
     /* ── DELIFEQ ────────────────────────────────────────────────────────── */
@@ -302,9 +314,7 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
         CHECK(strcmp(r, "msev1probe") == 0, "MSETEX single: value correct", pass, fail);
 
         /* multiple keys across different slots (fanout) — different hash tags */
-        proxy_cmd(fd, r, sizeof(r), 7, "MSETEX",
-                  "{tc:str:mse:1}k", "100", "msev1",
-                  "{tc:str:mse:2}k", "100", "msev2");
+        proxy_cmd(fd, r, sizeof(r), 7, "MSETEX", "{tc:str:mse:1}k", "100", "msev1", "{tc:str:mse:2}k", "100", "msev2");
         CHECK(strcmp(r, "+OK") == 0, "MSETEX 2 keys in cross-slot: returns +OK", pass, fail);
 
         proxy_cmd(fd, r, sizeof(r), 2, "GET", "{tc:str:mse:1}k");
@@ -313,15 +323,19 @@ void run_string_tests(const char *host, int port, int *pass, int *fail) {
         CHECK(strcmp(r, "msev2") == 0, "MSETEX 2 keys in cross-slot: k2 value correct", pass, fail);
 
         proxy_cmd(fd, r, sizeof(r), 2, "TTL", "{tc:str:mse:1}k");
-        { long long v = atoll(r + 1); CHECK(r[0] == ':' && v > 0 && v <= 100, "MSETEX 2 keys in cross-slot: k1 TTL in (0,100]", pass, fail); }
+        {
+            long long v = atoll(r + 1);
+            CHECK(r[0] == ':' && v > 0 && v <= 100, "MSETEX 2 keys in cross-slot: k1 TTL in (0,100]", pass, fail);
+        }
         proxy_cmd(fd, r, sizeof(r), 2, "TTL", "{tc:str:mse:2}k");
-        { long long v = atoll(r + 1); CHECK(r[0] == ':' && v > 0 && v <= 100, "MSETEX 2 keys in cross-slot: k2 TTL in (0,100]", pass, fail); }
+        {
+            long long v = atoll(r + 1);
+            CHECK(r[0] == ':' && v > 0 && v <= 100, "MSETEX 2 keys in cross-slot: k2 TTL in (0,100]", pass, fail);
+        }
 
         /* three keys across three different slots */
-        proxy_cmd(fd, r, sizeof(r), 10, "MSETEX",
-                  "{tc:str:mse:1}k", "100", "msev1b",
-                  "{tc:str:mse:2}k", "100", "msev2b",
-                  "{tc:str:mse:3}k", "100", "msev3b");
+        proxy_cmd(fd, r, sizeof(r), 10, "MSETEX", "{tc:str:mse:1}k", "100", "msev1b", "{tc:str:mse:2}k", "100",
+                  "msev2b", "{tc:str:mse:3}k", "100", "msev3b");
         CHECK(strcmp(r, "+OK") == 0, "MSETEX 3 keys in cross-slot: returns +OK", pass, fail);
         proxy_cmd(fd, r, sizeof(r), 2, "GET", "{tc:str:mse:3}k");
         CHECK(strcmp(r, "msev3b") == 0, "MSETEX 3 keys in cross-slot: k3 value correct", pass, fail);

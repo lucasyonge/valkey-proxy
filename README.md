@@ -12,6 +12,16 @@ make NO_TLS=1   # build without TLS support
 make clean      # remove binary
 ```
 
+### Code style
+
+Sources are formatted with `clang-format` (config in `.clang-format`, based on Valkey's style).
+
+```bash
+make format        # format src/ and test/ in place
+make format-check  # fail if any file is not formatted (for CI)
+git config blame.ignoreRevsFile .git-blame-ignore-revs   # skip the bulk-format commit in git blame
+```
+
 ## Configuration
 Create a `proxy.conf` file before starting the proxy. All four parameters are required:
 

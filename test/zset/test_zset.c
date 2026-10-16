@@ -196,9 +196,12 @@ void run_zset_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, "*3") == 0, "ZMSCORE: returns *3 array", pass, fail);
     {
         char v[64];
-        resp_next_str(fd, v, sizeof(v)); CHECK(strcmp(v, "1") == 0, "ZMSCORE: a=1", pass, fail);
-        resp_next_str(fd, v, sizeof(v)); CHECK(strcmp(v, "(nil)") == 0, "ZMSCORE: nothere=nil", pass, fail);
-        resp_next_str(fd, v, sizeof(v)); CHECK(strcmp(v, "3") == 0, "ZMSCORE: c=3", pass, fail);
+        resp_next_str(fd, v, sizeof(v));
+        CHECK(strcmp(v, "1") == 0, "ZMSCORE: a=1", pass, fail);
+        resp_next_str(fd, v, sizeof(v));
+        CHECK(strcmp(v, "(nil)") == 0, "ZMSCORE: nothere=nil", pass, fail);
+        resp_next_str(fd, v, sizeof(v));
+        CHECK(strcmp(v, "3") == 0, "ZMSCORE: c=3", pass, fail);
     }
 
     /* ── ZPOPMIN / ZPOPMAX ────────────────────────────────────────────── */
@@ -249,8 +252,8 @@ void run_zset_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, "*2") == 0, "ZSCAN: returns outer *2 array", pass, fail);
     {
         char cur[64];
-        resp_next_str(fd, cur, sizeof(cur));   /* cursor */
-        resp_next_str(fd, r, sizeof(r));       /* inner *2N header (member+score pairs) */
+        resp_next_str(fd, cur, sizeof(cur)); /* cursor */
+        resp_next_str(fd, r, sizeof(r));     /* inner *2N header (member+score pairs) */
         int n = (r[0] == '*') ? atoi(r + 1) : 0;
         CHECK(n >= 0 && n % 2 == 0, "ZSCAN: inner count is non-negative even number", pass, fail);
         char v[64];
@@ -325,15 +328,15 @@ void run_zset_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, "*2") == 0, "ZMPOP: outer *2 [key, elements-array]", pass, fail);
     {
         char kname[128];
-        resp_next_str(fd, kname, sizeof(kname));    /* key name */
-        resp_next_str(fd, r, sizeof(r));            /* inner *N header */
+        resp_next_str(fd, kname, sizeof(kname)); /* key name */
+        resp_next_str(fd, r, sizeof(r));         /* inner *N header */
         int n = (r[0] == '*') ? atoi(r + 1) : 0;
         CHECK(n == 1, "ZMPOP MIN: 1 element popped", pass, fail);
         char v[64];
         for (int i = 0; i < n; i++) {
-            resp_next_str(fd, v, sizeof(v));  /* *2 sub-array header */
-            resp_next_str(fd, v, sizeof(v));  /* member */
-            resp_next_str(fd, v, sizeof(v));  /* score */
+            resp_next_str(fd, v, sizeof(v)); /* *2 sub-array header */
+            resp_next_str(fd, v, sizeof(v)); /* member */
+            resp_next_str(fd, v, sizeof(v)); /* score */
         }
     }
     proxy_cmd(fd, r, sizeof(r), 2, "ZCARD", "{tc:zset}:mp");
@@ -354,40 +357,31 @@ void run_zset_tests(const char *host, int port, int *pass, int *fail) {
     proxy_cmd(fd, r, sizeof(r), 4, "ZADD", "tc_zcs_y", "1", "y1");
 
     proxy_cmd(fd, r, sizeof(r), 4, "ZDIFF", "2", "tc_zcs_x", "tc_zcs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "ZDIFF crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "ZDIFF crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 5, "ZDIFFSTORE", "tc_zcs_z", "2", "tc_zcs_x", "tc_zcs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "ZDIFFSTORE crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "ZDIFFSTORE crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 4, "ZINTER", "2", "tc_zcs_x", "tc_zcs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "ZINTER crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "ZINTER crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 4, "ZINTERCARD", "2", "tc_zcs_x", "tc_zcs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "ZINTERCARD crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "ZINTERCARD crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 5, "ZINTERSTORE", "tc_zcs_z", "2", "tc_zcs_x", "tc_zcs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "ZINTERSTORE crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "ZINTERSTORE crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 5, "ZMPOP", "2", "tc_zcs_x", "tc_zcs_y", "MIN");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "ZMPOP crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "ZMPOP crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 5, "ZRANGESTORE", "tc_zcs_z", "tc_zcs_x", "0", "-1");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "ZRANGESTORE crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "ZRANGESTORE crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 4, "ZUNION", "2", "tc_zcs_x", "tc_zcs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "ZUNION crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "ZUNION crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 5, "ZUNIONSTORE", "tc_zcs_z", "2", "tc_zcs_x", "tc_zcs_y");
-    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL,
-          "ZUNIONSTORE crossslot: returns CROSSSLOT error", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "ZUNIONSTORE crossslot: returns CROSSSLOT error", pass, fail);
 
     proxy_cmd(fd, r, sizeof(r), 1, "FLUSHDB");
     close(fd);

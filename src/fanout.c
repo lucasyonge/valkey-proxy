@@ -1,11 +1,14 @@
 #include "proxy.h"
 #include <sys/time.h>
 
-#define FANOUT_RESET_CLIENT(client) do { \
-    (client)->pbuf_len=0; (client)->hbuf_len=0; \
-    (client)->using_pbuf=0; (client)->state=CS_READING_HDR; \
-    fd_watch(w, (client)->fd, EL_READABLE); \
-} while(0)
+#define FANOUT_RESET_CLIENT(client)             \
+    do {                                        \
+        (client)->pbuf_len = 0;                 \
+        (client)->hbuf_len = 0;                 \
+        (client)->using_pbuf = 0;               \
+        (client)->state = CS_READING_HDR;       \
+        fd_watch(w, (client)->fd, EL_READABLE); \
+    } while (0)
 
 /* ── fanout sub-request completion ─────────────────────────────────── */
 void fanout_ctx_free(FanoutCtx *ctx) {
@@ -51,21 +54,34 @@ void handle_fanout_sub_readable(Worker *w, PoolConn *conn) {
         if (sub->rbuf_cap - sub->rbuf_len < 4096) {
             int nc = sub->rbuf_cap ? sub->rbuf_cap * 2 : 4096;
             char *tmp = realloc(sub->rbuf, (size_t)nc);
-            if (!tmp) { sub->error = 1; break; }
-            sub->rbuf = tmp; sub->rbuf_cap = nc;
+            if (!tmp) {
+                sub->error = 1;
+                break;
+            }
+            sub->rbuf = tmp;
+            sub->rbuf_cap = nc;
         }
-        ssize_t n = read(conn->fd, sub->rbuf + sub->rbuf_len,
-                         (size_t)(sub->rbuf_cap - sub->rbuf_len));
+        ssize_t n = read(conn->fd, sub->rbuf + sub->rbuf_len, (size_t)(sub->rbuf_cap - sub->rbuf_len));
         if (n < 0) {
             if (errno == EAGAIN) return; /* drained; wait for more data */
-            sub->error = 1; break;
+            sub->error = 1;
+            break;
         }
-        if (n == 0) { sub->error = 1; break; }
+        if (n == 0) {
+            sub->error = 1;
+            break;
+        }
         sub->rbuf_len += (int)n;
 
         int rlen = resp_response_len(sub->rbuf, sub->rbuf_len);
-        if (rlen < 0) { sub->error = 1; break; }
-        if (rlen > 0) { sub->rbuf_len = rlen; break; }
+        if (rlen < 0) {
+            sub->error = 1;
+            break;
+        }
+        if (rlen > 0) {
+            sub->rbuf_len = rlen;
+            break;
+        }
         /* rlen == 0: incomplete, keep draining the socket */
     }
 
@@ -84,12 +100,15 @@ void handle_fanout_sub_readable(Worker *w, PoolConn *conn) {
      * facing aggregated reply could be, and that's assembled fresh by
      * fanout_agg_*() from scratch, never copied from sub->rbuf verbatim. */
     if (!sub->error && conn->resp3) {
-        char *out; int out_len;
+        char *out;
+        int out_len;
         if (resp3_downgrade(sub->rbuf, sub->rbuf_len, -1, &out, &out_len) < 0) {
             sub->error = 1;
         } else {
             free(sub->rbuf);
-            sub->rbuf = out; sub->rbuf_len = out_len; sub->rbuf_cap = out_len;
+            sub->rbuf = out;
+            sub->rbuf_len = out_len;
+            sub->rbuf_cap = out_len;
         }
     }
 
@@ -99,8 +118,10 @@ void handle_fanout_sub_readable(Worker *w, PoolConn *conn) {
     conn->waiting_client = NULL;
     /* A conn that just errored/EOF'd must not be recycled as if healthy --
      * destroy it instead, mirroring the single-key error path. */
-    if (sub->error) pool_destroy_conn(w, conn);
-    else            pool_release(w, conn);
+    if (sub->error)
+        pool_destroy_conn(w, conn);
+    else
+        pool_release(w, conn);
     sub->conn = NULL;
 
     if (sub->error) ctx->had_error = 1;
@@ -120,7 +141,10 @@ static const char *resp_array_nth(const char *buf, int len, int n, int *elem_len
         if (off >= len) return NULL;
         int el = resp_response_len(buf + off, len - off);
         if (el <= 0) return NULL;
-        if (i == n) { *elem_len = el; return buf + off; }
+        if (i == n) {
+            *elem_len = el;
+            return buf + off;
+        }
         off += el;
     }
     return NULL;
@@ -144,7 +168,8 @@ static char *fanout_agg_sum(FanoutCtx *ctx, int *out_len) {
     for (int i = 0; i < ctx->nsubs; i++) {
         FanoutSub *s = &ctx->subs[i];
         if (s->error || !s->rbuf) continue;
-        if (s->rbuf[0] == ':') total += atoll(s->rbuf + 1);
+        if (s->rbuf[0] == ':')
+            total += atoll(s->rbuf + 1);
         else if (s->rbuf[0] == '-') {
             char *r = malloc((size_t)s->rbuf_len);
             if (!r) return NULL;
@@ -157,7 +182,8 @@ static char *fanout_agg_sum(FanoutCtx *ctx, int *out_len) {
     int n = snprintf(tmp, sizeof(tmp), ":%lld\r\n", total);
     char *r = malloc((size_t)n);
     if (!r) return NULL;
-    memcpy(r, tmp, (size_t)n); *out_len = n;
+    memcpy(r, tmp, (size_t)n);
+    *out_len = n;
     return r;
 }
 
@@ -169,13 +195,18 @@ static char *fanout_agg_ok(FanoutCtx *ctx, int *out_len) {
                 char *r = malloc((size_t)s->rbuf_len);
                 if (!r) return NULL;
                 memcpy(r, s->rbuf, (size_t)s->rbuf_len);
-                *out_len = s->rbuf_len; return r;
+                *out_len = s->rbuf_len;
+                return r;
             }
             const char *e = "-ERR partial failure\r\n";
-            char *r = strdup(e); *out_len = (int)strlen(e); return r;
+            char *r = strdup(e);
+            *out_len = (int)strlen(e);
+            return r;
         }
     }
-    char *r = strdup("+OK\r\n"); *out_len = 5; return r;
+    char *r = strdup("+OK\r\n");
+    *out_len = 5;
+    return r;
 }
 
 static char *fanout_agg_any_ok(FanoutCtx *ctx, int *out_len) {
@@ -183,7 +214,9 @@ static char *fanout_agg_any_ok(FanoutCtx *ctx, int *out_len) {
     for (int i = 0; i < ctx->nsubs; i++) {
         FanoutSub *s = &ctx->subs[i];
         if (!s->error && s->rbuf && s->rbuf[0] == '+') {
-            char *r = strdup("+OK\r\n"); *out_len = 5; return r;
+            char *r = strdup("+OK\r\n");
+            *out_len = 5;
+            return r;
         }
         if (s->rbuf && s->rbuf_len > 0) last_err = s;
     }
@@ -191,10 +224,13 @@ static char *fanout_agg_any_ok(FanoutCtx *ctx, int *out_len) {
         char *r = malloc((size_t)last_err->rbuf_len);
         if (!r) return NULL;
         memcpy(r, last_err->rbuf, (size_t)last_err->rbuf_len);
-        *out_len = last_err->rbuf_len; return r;
+        *out_len = last_err->rbuf_len;
+        return r;
     }
     const char *e = "-ERR fan-out backend error\r\n";
-    char *r = strdup(e); *out_len = (int)strlen(e); return r;
+    char *r = strdup(e);
+    *out_len = (int)strlen(e);
+    return r;
 }
 
 /* Like fanout_agg_any_ok, but returns the first successful node's raw
@@ -207,7 +243,8 @@ static char *fanout_agg_first_ok(FanoutCtx *ctx, int *out_len) {
             char *r = malloc((size_t)s->rbuf_len);
             if (!r) return NULL;
             memcpy(r, s->rbuf, (size_t)s->rbuf_len);
-            *out_len = s->rbuf_len; return r;
+            *out_len = s->rbuf_len;
+            return r;
         }
     }
     for (int i = 0; i < ctx->nsubs; i++) {
@@ -216,11 +253,14 @@ static char *fanout_agg_first_ok(FanoutCtx *ctx, int *out_len) {
             char *r = malloc((size_t)s->rbuf_len);
             if (!r) return NULL;
             memcpy(r, s->rbuf, (size_t)s->rbuf_len);
-            *out_len = s->rbuf_len; return r;
+            *out_len = s->rbuf_len;
+            return r;
         }
     }
     const char *e = "-ERR fan-out backend error\r\n";
-    char *r = strdup(e); *out_len = (int)strlen(e); return r;
+    char *r = strdup(e);
+    *out_len = (int)strlen(e);
+    return r;
 }
 
 /* Requires every node to succeed (unlike fanout_agg_first_ok, which is
@@ -237,22 +277,28 @@ static char *fanout_agg_all_ok_bulk(FanoutCtx *ctx, int *out_len) {
                 char *r = malloc((size_t)s->rbuf_len);
                 if (!r) return NULL;
                 memcpy(r, s->rbuf, (size_t)s->rbuf_len);
-                *out_len = s->rbuf_len; return r;
+                *out_len = s->rbuf_len;
+                return r;
             }
             const char *e = "-ERR partial failure\r\n";
-            char *r = strdup(e); *out_len = (int)strlen(e); return r;
+            char *r = strdup(e);
+            *out_len = (int)strlen(e);
+            return r;
         }
     }
     FanoutSub *s0 = &ctx->subs[0];
     char *r = malloc((size_t)s0->rbuf_len);
     if (!r) return NULL;
     memcpy(r, s0->rbuf, (size_t)s0->rbuf_len);
-    *out_len = s0->rbuf_len; return r;
+    *out_len = s0->rbuf_len;
+    return r;
 }
 
 static char *fanout_agg_always_ok(FanoutCtx *ctx, int *out_len) {
     (void)ctx;
-    char *r = strdup("+OK\r\n"); *out_len = 5; return r;
+    char *r = strdup("+OK\r\n");
+    *out_len = 5;
+    return r;
 }
 
 static char *fanout_agg_array(FanoutCtx *ctx, int *out_len) {
@@ -265,14 +311,15 @@ static char *fanout_agg_array(FanoutCtx *ctx, int *out_len) {
         int cnt = atoi(s->rbuf + 1);
         if (cnt <= 0) continue;
         total_elems += cnt;
-        total_data  += s->rbuf_len - (int)(nl - s->rbuf) - 1;
+        total_data += s->rbuf_len - (int)(nl - s->rbuf) - 1;
     }
     char hdr[32];
     int hdr_len = snprintf(hdr, sizeof(hdr), "*%d\r\n", total_elems);
     char *out = malloc((size_t)(hdr_len + total_data + 1));
     if (!out) return NULL;
     int off = 0;
-    memcpy(out, hdr, (size_t)hdr_len); off += hdr_len;
+    memcpy(out, hdr, (size_t)hdr_len);
+    off += hdr_len;
     for (int i = 0; i < ctx->nsubs; i++) {
         FanoutSub *s = &ctx->subs[i];
         if (s->error || !s->rbuf || s->rbuf[0] != '*') continue;
@@ -281,9 +328,11 @@ static char *fanout_agg_array(FanoutCtx *ctx, int *out_len) {
         if (atoi(s->rbuf + 1) <= 0) continue;
         int data_off = (int)(nl - s->rbuf) + 1;
         int data_len = s->rbuf_len - data_off;
-        memcpy(out + off, s->rbuf + data_off, (size_t)data_len); off += data_len;
+        memcpy(out + off, s->rbuf + data_off, (size_t)data_len);
+        off += data_len;
     }
-    *out_len = off; return out;
+    *out_len = off;
+    return out;
 }
 
 /* SLOWLOG GET: each node's reply is an array of entries, newest first, each
@@ -303,9 +352,9 @@ static char *fanout_agg_array(FanoutCtx *ctx, int *out_len) {
  * node, not by true arrival order. */
 typedef struct {
     const char *p;
-    int         len;
-    long long   ts;
-    int         sub, pos;
+    int len;
+    long long ts;
+    int sub, pos;
 } SlowlogEntry;
 
 static int slowlog_entry_cmp(const void *a, const void *b) {
@@ -321,7 +370,7 @@ static long long slowlog_entry_ts(const char *p, int len) {
     const char *nl = memchr(p, '\n', (size_t)len);
     if (!nl) return 0;
     int off = (int)(nl - p) + 1;
-    int el = resp_response_len(p + off, len - off);  /* skip id */
+    int el = resp_response_len(p + off, len - off); /* skip id */
     if (el <= 0) return 0;
     off += el;
     if (off >= len || p[off] != ':') return 0;
@@ -357,10 +406,13 @@ static char *fanout_agg_slowlog_get(FanoutCtx *ctx, int *out_len) {
         for (int j = 0; j < cnt && n < total; j++) {
             int el = resp_response_len(s->rbuf + off, s->rbuf_len - off);
             if (el <= 0) break;
-            ents[n].p = s->rbuf + off; ents[n].len = el;
+            ents[n].p = s->rbuf + off;
+            ents[n].len = el;
             ents[n].ts = slowlog_entry_ts(s->rbuf + off, el);
-            ents[n].sub = i; ents[n].pos = j;
-            n++; off += el;
+            ents[n].sub = i;
+            ents[n].pos = j;
+            n++;
+            off += el;
         }
     }
     qsort(ents, (size_t)n, sizeof(SlowlogEntry), slowlog_entry_cmp);
@@ -373,12 +425,20 @@ static char *fanout_agg_slowlog_get(FanoutCtx *ctx, int *out_len) {
     int data = 0;
     for (int i = 0; i < keep; i++) data += ents[i].len;
     char *out = malloc((size_t)(hdr_len + data + 1));
-    if (!out) { free(ents); return NULL; }
+    if (!out) {
+        free(ents);
+        return NULL;
+    }
     int o = 0;
-    memcpy(out, hdr, (size_t)hdr_len); o += hdr_len;
-    for (int i = 0; i < keep; i++) { memcpy(out + o, ents[i].p, (size_t)ents[i].len); o += ents[i].len; }
+    memcpy(out, hdr, (size_t)hdr_len);
+    o += hdr_len;
+    for (int i = 0; i < keep; i++) {
+        memcpy(out + o, ents[i].p, (size_t)ents[i].len);
+        o += ents[i].len;
+    }
     free(ents);
-    *out_len = o; return out;
+    *out_len = o;
+    return out;
 }
 
 /* FT.SEARCH: each node's reply is a RESP array shaped
@@ -397,9 +457,13 @@ static char *fanout_agg_ft_search(FanoutCtx *ctx, int *out_len) {
     int n_elems = 1; /* the merged total_results element */
     int tail_data = 0;
     int any_ok = 0;
-    const char **tails = calloc((size_t)ctx->nsubs, sizeof(char*));
+    const char **tails = calloc((size_t)ctx->nsubs, sizeof(char *));
     int *tail_lens = calloc((size_t)ctx->nsubs, sizeof(int));
-    if (!tails || !tail_lens) { free(tails); free(tail_lens); return NULL; }
+    if (!tails || !tail_lens) {
+        free(tails);
+        free(tail_lens);
+        return NULL;
+    }
 
     for (int i = 0; i < ctx->nsubs; i++) {
         FanoutSub *s = &ctx->subs[i];
@@ -423,9 +487,12 @@ static char *fanout_agg_ft_search(FanoutCtx *ctx, int *out_len) {
     }
 
     if (!any_ok) {
-        free(tails); free(tail_lens);
+        free(tails);
+        free(tail_lens);
         const char *e = "-ERR fan-out backend error\r\n";
-        char *r = strdup(e); *out_len = (int)strlen(e); return r;
+        char *r = strdup(e);
+        *out_len = (int)strlen(e);
+        return r;
     }
 
     char total_buf[32];
@@ -434,15 +501,26 @@ static char *fanout_agg_ft_search(FanoutCtx *ctx, int *out_len) {
     int hdr_len = snprintf(hdr, sizeof(hdr), "*%d\r\n", n_elems);
 
     char *out = malloc((size_t)(hdr_len + total_len + tail_data));
-    if (!out) { free(tails); free(tail_lens); return NULL; }
-    int off = 0;
-    memcpy(out + off, hdr, (size_t)hdr_len); off += hdr_len;
-    memcpy(out + off, total_buf, (size_t)total_len); off += total_len;
-    for (int i = 0; i < ctx->nsubs; i++) {
-        if (tails[i]) { memcpy(out + off, tails[i], (size_t)tail_lens[i]); off += tail_lens[i]; }
+    if (!out) {
+        free(tails);
+        free(tail_lens);
+        return NULL;
     }
-    free(tails); free(tail_lens);
-    *out_len = off; return out;
+    int off = 0;
+    memcpy(out + off, hdr, (size_t)hdr_len);
+    off += hdr_len;
+    memcpy(out + off, total_buf, (size_t)total_len);
+    off += total_len;
+    for (int i = 0; i < ctx->nsubs; i++) {
+        if (tails[i]) {
+            memcpy(out + off, tails[i], (size_t)tail_lens[i]);
+            off += tail_lens[i];
+        }
+    }
+    free(tails);
+    free(tail_lens);
+    *out_len = off;
+    return out;
 }
 
 static char *fanout_agg_mget(FanoutCtx *ctx, int *out_len) {
@@ -452,7 +530,10 @@ static char *fanout_agg_mget(FanoutCtx *ctx, int *out_len) {
     int total_size = hdr_len;
     for (int i = 0; i < total; i++) {
         FanoutSub *s = &ctx->subs[ctx->mget_sub[i]];
-        if (s->error || !s->rbuf) { total_size += 5; continue; }
+        if (s->error || !s->rbuf) {
+            total_size += 5;
+            continue;
+        }
         int el;
         if (!resp_array_nth(s->rbuf, s->rbuf_len, ctx->mget_pos[i], &el))
             total_size += 5;
@@ -462,60 +543,82 @@ static char *fanout_agg_mget(FanoutCtx *ctx, int *out_len) {
     char *out = malloc((size_t)total_size + 1);
     if (!out) return NULL;
     int off = 0;
-    memcpy(out, hdr, (size_t)hdr_len); off += hdr_len;
+    memcpy(out, hdr, (size_t)hdr_len);
+    off += hdr_len;
     for (int i = 0; i < total; i++) {
         FanoutSub *s = &ctx->subs[ctx->mget_sub[i]];
-        if (s->error || !s->rbuf) { memcpy(out + off, "$-1\r\n", 5); off += 5; continue; }
+        if (s->error || !s->rbuf) {
+            memcpy(out + off, "$-1\r\n", 5);
+            off += 5;
+            continue;
+        }
         int el;
         const char *elem = resp_array_nth(s->rbuf, s->rbuf_len, ctx->mget_pos[i], &el);
-        if (!elem) { memcpy(out + off, "$-1\r\n", 5); off += 5; continue; }
-        memcpy(out + off, elem, (size_t)el); off += el;
+        if (!elem) {
+            memcpy(out + off, "$-1\r\n", 5);
+            off += 5;
+            continue;
+        }
+        memcpy(out + off, elem, (size_t)el);
+        off += el;
     }
-    *out_len = off; return out;
+    *out_len = off;
+    return out;
 }
 
 static uint64_t scan_parse_cursor(const char *buf, int len) {
     if (!buf || len < 10 || buf[0] != '*') return 0;
-    const char *nl = memchr(buf + 1, '\n', len - 1); if (!nl) return 0;
+    const char *nl = memchr(buf + 1, '\n', len - 1);
+    if (!nl) return 0;
     int off = (int)(nl - buf) + 1;
     if (off >= len || buf[off] != '$') return 0;
     const char *p = buf + off + 1;
-    const char *nl2 = memchr(p, '\n', len - off - 1); if (!nl2) return 0;
+    const char *nl2 = memchr(p, '\n', len - off - 1);
+    if (!nl2) return 0;
     int clen = atoi(p);
     if (clen < 0 || clen > 20) return 0;
     int ds = (int)(nl2 - buf) + 1;
     if (ds + clen > len) return 0;
-    char tmp[24]; memcpy(tmp, buf + ds, (size_t)clen); tmp[clen] = '\0';
+    char tmp[24];
+    memcpy(tmp, buf + ds, (size_t)clen);
+    tmp[clen] = '\0';
     return strtoull(tmp, NULL, 10);
 }
 
 static const char *scan_keys_array(const char *buf, int len, int *arr_len) {
     if (!buf || len < 10 || buf[0] != '*') return NULL;
-    const char *nl = memchr(buf + 1, '\n', len - 1); if (!nl) return NULL;
+    const char *nl = memchr(buf + 1, '\n', len - 1);
+    if (!nl) return NULL;
     int off = (int)(nl - buf) + 1;
     if (off >= len || buf[off] != '$') return NULL;
     const char *p = buf + off + 1;
-    const char *nl2 = memchr(p, '\n', len - off - 1); if (!nl2) return NULL;
+    const char *nl2 = memchr(p, '\n', len - off - 1);
+    if (!nl2) return NULL;
     int clen = atoi(p);
     off = (int)(nl2 - buf) + 1 + clen + 2;
     if (off >= len) return NULL;
     int alen = resp_response_len(buf + off, len - off);
     if (alen <= 0) return NULL;
-    *arr_len = alen; return buf + off;
+    *arr_len = alen;
+    return buf + off;
 }
 
 static int scan_encode_cursor(char *out, int outsz, const uint64_t *cursors, int nnodes) {
     int n = 0;
     for (int i = 0; i < nnodes; i++)
-        n += snprintf(out + n, (size_t)(outsz - n), "%016llx",
-                      (unsigned long long)cursors[i]);
+        n += snprintf(out + n, (size_t)(outsz - n), "%016llx", (unsigned long long)cursors[i]);
     return n;
 }
 
 static void scan_decode_cursor(const char *s, int slen, uint64_t *cursors, int nnodes) {
     for (int i = 0; i < nnodes; i++) {
-        if (i * 16 + 16 > slen) { cursors[i] = 0; continue; }
-        char tmp[17]; memcpy(tmp, s + i * 16, 16); tmp[16] = '\0';
+        if (i * 16 + 16 > slen) {
+            cursors[i] = 0;
+            continue;
+        }
+        char tmp[17];
+        memcpy(tmp, s + i * 16, 16);
+        tmp[16] = '\0';
         cursors[i] = strtoull(tmp, NULL, 16);
     }
 }
@@ -545,39 +648,46 @@ static char *fanout_agg_scan(FanoutCtx *ctx, int *out_len) {
         int cnt = atoi(arr + 1);
         if (cnt <= 0) continue;
         total_elems += cnt;
-        total_data  += al - (int)(nl - arr) - 1;
+        total_data += al - (int)(nl - arr) - 1;
     }
 
     int all_done = 1;
     for (int ti = 0; ti < ctx->scan_ntargets; ti++) {
-        if (new_cursors[ctx->scan_target_nodes[ti]] != 0) { all_done = 0; break; }
+        if (new_cursors[ctx->scan_target_nodes[ti]] != 0) {
+            all_done = 0;
+            break;
+        }
     }
 
     char cursor_str[MAX_NODES * 16 + 4];
     int cursor_len;
     if (all_done) {
-        cursor_str[0] = '0'; cursor_str[1] = '\0'; cursor_len = 1;
+        cursor_str[0] = '0';
+        cursor_str[1] = '\0';
+        cursor_len = 1;
     } else {
-        uint64_t enc[MAX_NODES]; memset(enc, 0, sizeof(enc));
-        for (int ti = 0; ti < ctx->scan_ntargets; ti++)
-            enc[ti] = new_cursors[ctx->scan_target_nodes[ti]];
-        cursor_len = scan_encode_cursor(cursor_str, sizeof(cursor_str),
-                                         enc, ctx->scan_ntargets);
+        uint64_t enc[MAX_NODES];
+        memset(enc, 0, sizeof(enc));
+        for (int ti = 0; ti < ctx->scan_ntargets; ti++) enc[ti] = new_cursors[ctx->scan_target_nodes[ti]];
+        cursor_len = scan_encode_cursor(cursor_str, sizeof(cursor_str), enc, ctx->scan_ntargets);
     }
 
     char keys_hdr[32];
     int keys_hdr_len = snprintf(keys_hdr, sizeof(keys_hdr), "*%d\r\n", total_elems);
     char resp_hdr[64];
-    int resp_hdr_len = snprintf(resp_hdr, sizeof(resp_hdr),
-                                 "*2\r\n$%d\r\n", cursor_len);
+    int resp_hdr_len = snprintf(resp_hdr, sizeof(resp_hdr), "*2\r\n$%d\r\n", cursor_len);
     int total_size = resp_hdr_len + cursor_len + 2 + keys_hdr_len + total_data;
     char *out = malloc((size_t)total_size + 1);
     if (!out) return NULL;
     int off = 0;
-    memcpy(out + off, resp_hdr, (size_t)resp_hdr_len); off += resp_hdr_len;
-    memcpy(out + off, cursor_str, (size_t)cursor_len); off += cursor_len;
-    out[off++] = '\r'; out[off++] = '\n';
-    memcpy(out + off, keys_hdr, (size_t)keys_hdr_len); off += keys_hdr_len;
+    memcpy(out + off, resp_hdr, (size_t)resp_hdr_len);
+    off += resp_hdr_len;
+    memcpy(out + off, cursor_str, (size_t)cursor_len);
+    off += cursor_len;
+    out[off++] = '\r';
+    out[off++] = '\n';
+    memcpy(out + off, keys_hdr, (size_t)keys_hdr_len);
+    off += keys_hdr_len;
     for (int si = 0; si < ctx->nsubs; si++) {
         FanoutSub *s = &ctx->subs[si];
         if (s->error || !s->rbuf) continue;
@@ -588,52 +698,81 @@ static char *fanout_agg_scan(FanoutCtx *ctx, int *out_len) {
         if (!nl || atoi(arr + 1) <= 0) continue;
         int data_off = (int)(nl - arr) + 1;
         int data_len = al - data_off;
-        memcpy(out + off, arr + data_off, (size_t)data_len); off += data_len;
+        memcpy(out + off, arr + data_off, (size_t)data_len);
+        off += data_len;
     }
-    *out_len = off; return out;
+    *out_len = off;
+    return out;
 }
 
 static int lcs_compute_len(const char *s1, int l1, const char *s2, int l2) {
     if (l1 <= 0 || l2 <= 0) return 0;
-    if (l1 < l2) { const char *t=s1; s1=s2; s2=t; int x=l1; l1=l2; l2=x; }
+    if (l1 < l2) {
+        const char *t = s1;
+        s1 = s2;
+        s2 = t;
+        int x = l1;
+        l1 = l2;
+        l2 = x;
+    }
     int *prev = (int *)calloc((size_t)(l2 + 1), sizeof(int));
     int *curr = (int *)calloc((size_t)(l2 + 1), sizeof(int));
-    if (!prev || !curr) { free(prev); free(curr); return 0; }
+    if (!prev || !curr) {
+        free(prev);
+        free(curr);
+        return 0;
+    }
     for (int i = 1; i <= l1; i++) {
         memset(curr, 0, (size_t)(l2 + 1) * sizeof(int));
         for (int j = 1; j <= l2; j++) {
-            if (s1[i-1] == s2[j-1]) curr[j] = prev[j-1] + 1;
-            else curr[j] = prev[j] > curr[j-1] ? prev[j] : curr[j-1];
+            if (s1[i - 1] == s2[j - 1])
+                curr[j] = prev[j - 1] + 1;
+            else
+                curr[j] = prev[j] > curr[j - 1] ? prev[j] : curr[j - 1];
         }
-        int *tmp = prev; prev = curr; curr = tmp;
+        int *tmp = prev;
+        prev = curr;
+        curr = tmp;
     }
     int result = prev[l2];
-    free(prev); free(curr);
+    free(prev);
+    free(curr);
     return result;
 }
 
 static char *lcs_compute_string(const char *s1, int l1, const char *s2, int l2, int *out_len) {
-    if (l1 <= 0 || l2 <= 0) { *out_len = 0; return strdup(""); }
+    if (l1 <= 0 || l2 <= 0) {
+        *out_len = 0;
+        return strdup("");
+    }
     int cols = l2 + 1;
     int *dp = (int *)calloc((size_t)(l1 + 1) * (size_t)cols, sizeof(int));
     if (!dp) return NULL;
     for (int i = 1; i <= l1; i++)
         for (int j = 1; j <= l2; j++) {
-            if (s1[i-1] == s2[j-1])
-                dp[i*cols+j] = dp[(i-1)*cols+(j-1)] + 1;
+            if (s1[i - 1] == s2[j - 1])
+                dp[i * cols + j] = dp[(i - 1) * cols + (j - 1)] + 1;
             else
-                dp[i*cols+j] = dp[(i-1)*cols+j] > dp[i*cols+(j-1)] ?
-                               dp[(i-1)*cols+j] : dp[i*cols+(j-1)];
+                dp[i * cols + j] =
+                    dp[(i - 1) * cols + j] > dp[i * cols + (j - 1)] ? dp[(i - 1) * cols + j] : dp[i * cols + (j - 1)];
         }
-    int len = dp[l1*cols+l2];
+    int len = dp[l1 * cols + l2];
     char *result = (char *)malloc((size_t)len + 1);
-    if (!result) { free(dp); return NULL; }
+    if (!result) {
+        free(dp);
+        return NULL;
+    }
     result[len] = '\0';
     int pos = len, i = l1, j = l2;
     while (i > 0 && j > 0) {
-        if (s1[i-1] == s2[j-1]) { result[--pos] = s1[i-1]; i--; j--; }
-        else if (dp[(i-1)*cols+j] >= dp[i*cols+(j-1)]) i--;
-        else j--;
+        if (s1[i - 1] == s2[j - 1]) {
+            result[--pos] = s1[i - 1];
+            i--;
+            j--;
+        } else if (dp[(i - 1) * cols + j] >= dp[i * cols + (j - 1)])
+            i--;
+        else
+            j--;
     }
     *out_len = len;
     free(dp);
@@ -647,8 +786,14 @@ static char *fanout_agg_lcs(FanoutCtx *ctx, int *out_len) {
         v1 = resp_parse_bulk_str(ctx->subs[0].rbuf, ctx->subs[0].rbuf_len, &v1len);
     if (!ctx->subs[1].error && ctx->subs[1].rbuf)
         v2 = resp_parse_bulk_str(ctx->subs[1].rbuf, ctx->subs[1].rbuf_len, &v2len);
-    if (!v1) { v1 = ""; v1len = 0; }
-    if (!v2) { v2 = ""; v2len = 0; }
+    if (!v1) {
+        v1 = "";
+        v1len = 0;
+    }
+    if (!v2) {
+        v2 = "";
+        v2len = 0;
+    }
 
     char *resp = NULL;
     if (ctx->lcs_mode == 1) {
@@ -656,7 +801,10 @@ static char *fanout_agg_lcs(FanoutCtx *ctx, int *out_len) {
         char tmp[32];
         int n = snprintf(tmp, sizeof(tmp), ":%d\r\n", len);
         resp = (char *)malloc((size_t)n);
-        if (resp) { memcpy(resp, tmp, (size_t)n); *out_len = n; }
+        if (resp) {
+            memcpy(resp, tmp, (size_t)n);
+            *out_len = n;
+        }
     } else {
         int lcs_len = 0;
         char *lcs = lcs_compute_string(v1, v1len, v2, v2len, &lcs_len);
@@ -667,7 +815,7 @@ static char *fanout_agg_lcs(FanoutCtx *ctx, int *out_len) {
         if (resp) {
             memcpy(resp, hdr, (size_t)hdr_len);
             memcpy(resp + hdr_len, lcs, (size_t)lcs_len);
-            resp[hdr_len + lcs_len]     = '\r';
+            resp[hdr_len + lcs_len] = '\r';
             resp[hdr_len + lcs_len + 1] = '\n';
             *out_len = hdr_len + lcs_len + 2;
         }
@@ -682,7 +830,8 @@ static char *fanout_agg_lcs(FanoutCtx *ctx, int *out_len) {
  * execution state is independent of the others. Nodes that errored or
  * didn't reply with the expected *4 array are skipped. */
 static char *fanout_agg_function_stats(Worker *w, FanoutCtx *ctx, int *out_len) {
-    char *entries[MAX_FANOUT_SUBS]; int entry_lens[MAX_FANOUT_SUBS];
+    char *entries[MAX_FANOUT_SUBS];
+    int entry_lens[MAX_FANOUT_SUBS];
     int nentries = 0;
 
     for (int i = 0; i < ctx->nsubs; i++) {
@@ -698,9 +847,8 @@ static char *fanout_agg_function_stats(Worker *w, FanoutCtx *ctx, int *out_len) 
         int ipport_len = snprintf(ipport, sizeof(ipport), "%s:%d", nd->ip, nd->port);
 
         char hdr[196];
-        int hdr_len = snprintf(hdr, sizeof(hdr),
-            "*6\r\n$7\r\nnode-ip\r\n$%d\r\n%s\r\n$14\r\nrunning_script\r\n",
-            ipport_len, ipport);
+        int hdr_len = snprintf(hdr, sizeof(hdr), "*6\r\n$7\r\nnode-ip\r\n$%d\r\n%s\r\n$14\r\nrunning_script\r\n",
+                               ipport_len, ipport);
         static const char *engines_hdr = "$7\r\nengines\r\n";
         int engines_hdr_len = (int)strlen(engines_hdr);
 
@@ -708,12 +856,18 @@ static char *fanout_agg_function_stats(Worker *w, FanoutCtx *ctx, int *out_len) 
         char *entry = malloc((size_t)total);
         if (!entry) continue;
         int off = 0;
-        memcpy(entry + off, hdr, (size_t)hdr_len); off += hdr_len;
-        memcpy(entry + off, rs, (size_t)rs_len); off += rs_len;
-        memcpy(entry + off, engines_hdr, (size_t)engines_hdr_len); off += engines_hdr_len;
-        memcpy(entry + off, en, (size_t)en_len); off += en_len;
+        memcpy(entry + off, hdr, (size_t)hdr_len);
+        off += hdr_len;
+        memcpy(entry + off, rs, (size_t)rs_len);
+        off += rs_len;
+        memcpy(entry + off, engines_hdr, (size_t)engines_hdr_len);
+        off += engines_hdr_len;
+        memcpy(entry + off, en, (size_t)en_len);
+        off += en_len;
 
-        entries[nentries] = entry; entry_lens[nentries] = off; nentries++;
+        entries[nentries] = entry;
+        entry_lens[nentries] = off;
+        nentries++;
     }
 
     char outer_hdr[32];
@@ -727,9 +881,11 @@ static char *fanout_agg_function_stats(Worker *w, FanoutCtx *ctx, int *out_len) 
         return NULL;
     }
     int off = 0;
-    memcpy(out, outer_hdr, (size_t)outer_hdr_len); off += outer_hdr_len;
+    memcpy(out, outer_hdr, (size_t)outer_hdr_len);
+    off += outer_hdr_len;
     for (int i = 0; i < nentries; i++) {
-        memcpy(out + off, entries[i], (size_t)entry_lens[i]); off += entry_lens[i];
+        memcpy(out + off, entries[i], (size_t)entry_lens[i]);
+        off += entry_lens[i];
         free(entries[i]);
     }
     *out_len = off;
@@ -743,8 +899,10 @@ static char *fanout_agg_function_stats(Worker *w, FanoutCtx *ctx, int *out_len) 
 #define CMD_INFO_MAX_ENTRIES 2048
 
 static int command_info_name_supported(const char *name, int namelen) {
-    char buf[64]; int n = namelen < 63 ? namelen : 63;
-    memcpy(buf, name, (size_t)n); buf[n] = '\0';
+    char buf[64];
+    int n = namelen < 63 ? namelen : 63;
+    memcpy(buf, name, (size_t)n);
+    buf[n] = '\0';
     for (int i = 0; buf[i]; i++) buf[i] = (char)toupper((unsigned char)buf[i]);
     return cmd_is_supported(buf);
 }
@@ -757,8 +915,12 @@ static char *command_info_build_array(const char **elems, const int *elem_lens, 
     char *out = malloc((size_t)total);
     if (!out) return NULL;
     int off = 0;
-    memcpy(out, hdr, (size_t)hdr_len); off += hdr_len;
-    for (int i = 0; i < n; i++) { memcpy(out + off, elems[i], (size_t)elem_lens[i]); off += elem_lens[i]; }
+    memcpy(out, hdr, (size_t)hdr_len);
+    off += hdr_len;
+    for (int i = 0; i < n; i++) {
+        memcpy(out + off, elems[i], (size_t)elem_lens[i]);
+        off += elem_lens[i];
+    }
     *out_len = off;
     return out;
 }
@@ -771,28 +933,37 @@ static char *fanout_agg_command_info_all(FanoutCtx *ctx, int *out_len) {
     FanoutSub *s = &ctx->subs[0];
     if (s->error || !s->rbuf) {
         const char *e = "-ERR fan-out backend error\r\n";
-        char *r = strdup(e); if (r) *out_len = (int)strlen(e); return r;
+        char *r = strdup(e);
+        if (r) *out_len = (int)strlen(e);
+        return r;
     }
     if (s->rbuf[0] != '*') {
         char *r = malloc((size_t)s->rbuf_len);
         if (!r) return NULL;
         memcpy(r, s->rbuf, (size_t)s->rbuf_len);
-        *out_len = s->rbuf_len; return r;
+        *out_len = s->rbuf_len;
+        return r;
     }
 
     int n = atoi(s->rbuf + 1);
     if (n < 0) n = 0;
     if (n > CMD_INFO_MAX_ENTRIES) n = CMD_INFO_MAX_ENTRIES;
 
-    const char *elems[CMD_INFO_MAX_ENTRIES]; int elem_lens[CMD_INFO_MAX_ENTRIES];
+    const char *elems[CMD_INFO_MAX_ENTRIES];
+    int elem_lens[CMD_INFO_MAX_ENTRIES];
     int kept = 0;
     for (int i = 0; i < n; i++) {
-        int elen; const char *elem = resp_array_nth(s->rbuf, s->rbuf_len, i, &elen);
+        int elen;
+        const char *elem = resp_array_nth(s->rbuf, s->rbuf_len, i, &elen);
         if (!elem) break;
-        int nlen; const char *name = resp_array_nth(elem, elen, 0, &nlen);
-        int vlen; const char *val = name ? resp_parse_bulk_str(name, nlen, &vlen) : NULL;
+        int nlen;
+        const char *name = resp_array_nth(elem, elen, 0, &nlen);
+        int vlen;
+        const char *val = name ? resp_parse_bulk_str(name, nlen, &vlen) : NULL;
         if (val && command_info_name_supported(val, vlen)) {
-            elems[kept] = elem; elem_lens[kept] = elen; kept++;
+            elems[kept] = elem;
+            elem_lens[kept] = elen;
+            kept++;
         }
     }
     return command_info_build_array(elems, elem_lens, kept, out_len);
@@ -805,13 +976,16 @@ static char *fanout_agg_command_info_named(FanoutCtx *ctx, int *out_len) {
     FanoutSub *s = &ctx->subs[0];
     if (s->error || !s->rbuf) {
         const char *e = "-ERR fan-out backend error\r\n";
-        char *r = strdup(e); if (r) *out_len = (int)strlen(e); return r;
+        char *r = strdup(e);
+        if (r) *out_len = (int)strlen(e);
+        return r;
     }
     if (s->rbuf[0] != '*') {
         char *r = malloc((size_t)s->rbuf_len);
         if (!r) return NULL;
         memcpy(r, s->rbuf, (size_t)s->rbuf_len);
-        *out_len = s->rbuf_len; return r;
+        *out_len = s->rbuf_len;
+        return r;
     }
 
     int n = atoi(s->rbuf + 1);
@@ -819,19 +993,33 @@ static char *fanout_agg_command_info_named(FanoutCtx *ctx, int *out_len) {
     if (n > CMD_INFO_MAX_ENTRIES) n = CMD_INFO_MAX_ENTRIES;
 
     static const char *NIL = "*-1\r\n";
-    const char *elems[CMD_INFO_MAX_ENTRIES]; int elem_lens[CMD_INFO_MAX_ENTRIES];
+    const char *elems[CMD_INFO_MAX_ENTRIES];
+    int elem_lens[CMD_INFO_MAX_ENTRIES];
     for (int i = 0; i < n; i++) {
-        int elen; const char *elem = resp_array_nth(s->rbuf, s->rbuf_len, i, &elen);
-        if (!elem) { elems[i] = NIL; elem_lens[i] = 5; continue; }
+        int elen;
+        const char *elem = resp_array_nth(s->rbuf, s->rbuf_len, i, &elen);
+        if (!elem) {
+            elems[i] = NIL;
+            elem_lens[i] = 5;
+            continue;
+        }
         int is_nil = (elem[0] == '*' && atoi(elem + 1) < 0);
-        if (is_nil) { elems[i] = NIL; elem_lens[i] = 5; continue; }
+        if (is_nil) {
+            elems[i] = NIL;
+            elem_lens[i] = 5;
+            continue;
+        }
 
-        int nlen; const char *name = resp_array_nth(elem, elen, 0, &nlen);
-        int vlen; const char *val = name ? resp_parse_bulk_str(name, nlen, &vlen) : NULL;
+        int nlen;
+        const char *name = resp_array_nth(elem, elen, 0, &nlen);
+        int vlen;
+        const char *val = name ? resp_parse_bulk_str(name, nlen, &vlen) : NULL;
         if (val && command_info_name_supported(val, vlen)) {
-            elems[i] = elem; elem_lens[i] = elen;
+            elems[i] = elem;
+            elem_lens[i] = elen;
         } else {
-            elems[i] = NIL; elem_lens[i] = 5;
+            elems[i] = NIL;
+            elem_lens[i] = 5;
         }
     }
     return command_info_build_array(elems, elem_lens, n, out_len);
@@ -848,29 +1036,40 @@ static char *fanout_agg_command_docs(FanoutCtx *ctx, int *out_len) {
     FanoutSub *s = &ctx->subs[0];
     if (s->error || !s->rbuf) {
         const char *e = "-ERR fan-out backend error\r\n";
-        char *r = strdup(e); if (r) *out_len = (int)strlen(e); return r;
+        char *r = strdup(e);
+        if (r) *out_len = (int)strlen(e);
+        return r;
     }
     if (s->rbuf[0] != '*') {
         char *r = malloc((size_t)s->rbuf_len);
         if (!r) return NULL;
         memcpy(r, s->rbuf, (size_t)s->rbuf_len);
-        *out_len = s->rbuf_len; return r;
+        *out_len = s->rbuf_len;
+        return r;
     }
 
     int n = atoi(s->rbuf + 1);
     if (n < 0) n = 0;
     if (n > CMD_INFO_MAX_ENTRIES) n = CMD_INFO_MAX_ENTRIES;
 
-    const char *elems[CMD_INFO_MAX_ENTRIES]; int elem_lens[CMD_INFO_MAX_ENTRIES];
+    const char *elems[CMD_INFO_MAX_ENTRIES];
+    int elem_lens[CMD_INFO_MAX_ENTRIES];
     int kept = 0;
     for (int i = 0; i + 1 < n; i += 2) {
-        int nlen; const char *name_elem = resp_array_nth(s->rbuf, s->rbuf_len, i, &nlen);
-        int dlen; const char *docs_elem = resp_array_nth(s->rbuf, s->rbuf_len, i + 1, &dlen);
+        int nlen;
+        const char *name_elem = resp_array_nth(s->rbuf, s->rbuf_len, i, &nlen);
+        int dlen;
+        const char *docs_elem = resp_array_nth(s->rbuf, s->rbuf_len, i + 1, &dlen);
         if (!name_elem || !docs_elem) break;
-        int vlen; const char *val = resp_parse_bulk_str(name_elem, nlen, &vlen);
+        int vlen;
+        const char *val = resp_parse_bulk_str(name_elem, nlen, &vlen);
         if (val && command_info_name_supported(val, vlen)) {
-            elems[kept] = name_elem; elem_lens[kept] = nlen; kept++;
-            elems[kept] = docs_elem; elem_lens[kept] = dlen; kept++;
+            elems[kept] = name_elem;
+            elem_lens[kept] = nlen;
+            kept++;
+            elems[kept] = docs_elem;
+            elem_lens[kept] = dlen;
+            kept++;
         }
     }
     return command_info_build_array(elems, elem_lens, kept, out_len);
@@ -884,27 +1083,35 @@ static char *fanout_agg_command_list(FanoutCtx *ctx, int *out_len) {
     FanoutSub *s = &ctx->subs[0];
     if (s->error || !s->rbuf) {
         const char *e = "-ERR fan-out backend error\r\n";
-        char *r = strdup(e); if (r) *out_len = (int)strlen(e); return r;
+        char *r = strdup(e);
+        if (r) *out_len = (int)strlen(e);
+        return r;
     }
     if (s->rbuf[0] != '*') {
         char *r = malloc((size_t)s->rbuf_len);
         if (!r) return NULL;
         memcpy(r, s->rbuf, (size_t)s->rbuf_len);
-        *out_len = s->rbuf_len; return r;
+        *out_len = s->rbuf_len;
+        return r;
     }
 
     int n = atoi(s->rbuf + 1);
     if (n < 0) n = 0;
     if (n > CMD_INFO_MAX_ENTRIES) n = CMD_INFO_MAX_ENTRIES;
 
-    const char *elems[CMD_INFO_MAX_ENTRIES]; int elem_lens[CMD_INFO_MAX_ENTRIES];
+    const char *elems[CMD_INFO_MAX_ENTRIES];
+    int elem_lens[CMD_INFO_MAX_ENTRIES];
     int kept = 0;
     for (int i = 0; i < n; i++) {
-        int elen; const char *elem = resp_array_nth(s->rbuf, s->rbuf_len, i, &elen);
+        int elen;
+        const char *elem = resp_array_nth(s->rbuf, s->rbuf_len, i, &elen);
         if (!elem) break;
-        int vlen; const char *val = resp_parse_bulk_str(elem, elen, &vlen);
+        int vlen;
+        const char *val = resp_parse_bulk_str(elem, elen, &vlen);
         if (val && command_info_name_supported(val, vlen)) {
-            elems[kept] = elem; elem_lens[kept] = elen; kept++;
+            elems[kept] = elem;
+            elem_lens[kept] = elen;
+            kept++;
         }
     }
     return command_info_build_array(elems, elem_lens, kept, out_len);
@@ -918,7 +1125,9 @@ static char *fanout_agg_command_count(FanoutCtx *ctx, int *out_len) {
     FanoutSub *s = &ctx->subs[0];
     if (s->error || !s->rbuf || s->rbuf[0] != '*') {
         const char *e = "-ERR fan-out backend error\r\n";
-        char *r = strdup(e); if (r) *out_len = (int)strlen(e); return r;
+        char *r = strdup(e);
+        if (r) *out_len = (int)strlen(e);
+        return r;
     }
 
     int n = atoi(s->rbuf + 1);
@@ -927,28 +1136,40 @@ static char *fanout_agg_command_count(FanoutCtx *ctx, int *out_len) {
 
     int count = 0;
     for (int i = 0; i < n; i++) {
-        int elen; const char *elem = resp_array_nth(s->rbuf, s->rbuf_len, i, &elen);
+        int elen;
+        const char *elem = resp_array_nth(s->rbuf, s->rbuf_len, i, &elen);
         if (!elem) break;
-        int vlen; const char *val = resp_parse_bulk_str(elem, elen, &vlen);
+        int vlen;
+        const char *val = resp_parse_bulk_str(elem, elen, &vlen);
         if (val && command_info_name_supported(val, vlen)) count++;
     }
-    char tmp[32]; int tl = snprintf(tmp, sizeof(tmp), ":%d\r\n", count);
+    char tmp[32];
+    int tl = snprintf(tmp, sizeof(tmp), ":%d\r\n", count);
     char *r = malloc((size_t)tl);
     if (!r) return NULL;
-    memcpy(r, tmp, (size_t)tl); *out_len = tl;
+    memcpy(r, tmp, (size_t)tl);
+    *out_len = tl;
     return r;
 }
 
 static void fanout_send_response(Worker *w, ClientConn *client, char *resp, int resp_len) {
     if (client->wbuf_cap < resp_len) {
         char *tmp = realloc(client->wbuf, (size_t)resp_len);
-        if (!tmp) { free(resp); client_send_error(w,client,"out of memory"); return; }
-        client->wbuf = tmp; client->wbuf_cap = resp_len;
+        if (!tmp) {
+            free(resp);
+            client_send_error(w, client, "out of memory");
+            return;
+        }
+        client->wbuf = tmp;
+        client->wbuf_cap = resp_len;
     }
     memcpy(client->wbuf, resp, (size_t)resp_len);
-    client->wbuf_len = resp_len; client->wbuf_off = 0;
+    client->wbuf_len = resp_len;
+    client->wbuf_off = 0;
     free(resp);
-    client->pbuf_len = 0; client->hbuf_len = 0; client->using_pbuf = 0;
+    client->pbuf_len = 0;
+    client->hbuf_len = 0;
+    client->using_pbuf = 0;
     client->state = CS_WRITING_RESP;
     fd_watch(w, client->fd, EL_WRITABLE);
 }
@@ -958,15 +1179,16 @@ static char *fanout_agg_pubsub_numsub(FanoutCtx *ctx, int *out_len);
 
 void fanout_aggregate_and_reply(Worker *w, FanoutCtx *ctx) {
     ClientConn *client = ctx->client;
-    char *resp = NULL; int resp_len = 0;
+    char *resp = NULL;
+    int resp_len = 0;
 
     if (ctx->had_error && !ctx->nsubs) {
         const char *e = "-ERR fan-out backend error\r\n";
-        resp = strdup(e); resp_len = (int)strlen(e);
+        resp = strdup(e);
+        resp_len = (int)strlen(e);
     } else if (!strcmp(ctx->cmd, "MGET") || !strcmp(ctx->cmd, "JSON.MGET")) {
         resp = fanout_agg_mget(ctx, &resp_len);
-    } else if (!strcmp(ctx->cmd, "MSET") || !strcmp(ctx->cmd, "MSETNX") ||
-               !strcmp(ctx->cmd, "MSETEX") ||
+    } else if (!strcmp(ctx->cmd, "MSET") || !strcmp(ctx->cmd, "MSETNX") || !strcmp(ctx->cmd, "MSETEX") ||
                !strcmp(ctx->cmd, "JSON.MSET")) {
         resp = fanout_agg_ok(ctx, &resp_len);
     } else if (!strcmp(ctx->cmd, "LCS")) {
@@ -1028,7 +1250,8 @@ void fanout_aggregate_and_reply(Worker *w, FanoutCtx *ctx) {
     if (!resp) resp_len = 0;
     if (!resp) {
         const char *e = "-ERR out of memory\r\n";
-        resp = strdup(e); resp_len = (int)strlen(e);
+        resp = strdup(e);
+        resp_len = (int)strlen(e);
     }
 
     fanout_ctx_free(ctx);
@@ -1036,15 +1259,24 @@ void fanout_aggregate_and_reply(Worker *w, FanoutCtx *ctx) {
     fanout_send_response(w, client, resp, resp_len);
 }
 
-static void fanout_dispatch_sub(Worker *w, FanoutCtx *ctx, int sub_idx,
-                                  const char *cmdbuf, int cmdlen) {
+static void fanout_dispatch_sub(Worker *w, FanoutCtx *ctx, int sub_idx, const char *cmdbuf, int cmdlen) {
     FanoutSub *sub = &ctx->subs[sub_idx];
     DbGroup *grp = db_group_get(w, ctx->client->db);
-    if (!grp) { sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++; return; }
+    if (!grp) {
+        sub->error = 1;
+        sub->done = 1;
+        ctx->had_error = 1;
+        ctx->ndone++;
+        return;
+    }
     ConnPool *pool = &grp->node_pools[sub->node_idx].pools[POOL_NORMAL];
     PoolConn *conn = pool_acquire_nb(w, pool);
     if (!conn) {
-        sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++; return;
+        sub->error = 1;
+        sub->done = 1;
+        ctx->had_error = 1;
+        ctx->ndone++;
+        return;
     }
     conn->waiting_client = NULL;
     conn->fanout_sub = sub;
@@ -1059,12 +1291,14 @@ static void fanout_dispatch_sub(Worker *w, FanoutCtx *ctx, int sub_idx,
          * above, but handle_backend_readable() checks resp3_handshake first,
          * so the handshake's own reply can't be misrouted to
          * handle_fanout_sub_readable(). */
-        if (resp3_defer_append(conn, cmdbuf, cmdlen) < 0 ||
-            resp3_start_conn_upgrade(w, conn) < 0) {
+        if (resp3_defer_append(conn, cmdbuf, cmdlen) < 0 || resp3_start_conn_upgrade(w, conn) < 0) {
             conn->fanout_sub = NULL;
             pool_destroy_conn(w, conn);
             sub->conn = NULL;
-            sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++;
+            sub->error = 1;
+            sub->done = 1;
+            ctx->had_error = 1;
+            ctx->ndone++;
         }
         return;
     }
@@ -1072,21 +1306,33 @@ static void fanout_dispatch_sub(Worker *w, FanoutCtx *ctx, int sub_idx,
     if (conn->wbuf_cap < cmdlen) {
         char *tmp = realloc(conn->wbuf, (size_t)cmdlen);
         if (!tmp) {
-            conn->fanout_sub = NULL; pool_release(w,conn); sub->conn = NULL;
-            sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++; return;
+            conn->fanout_sub = NULL;
+            pool_release(w, conn);
+            sub->conn = NULL;
+            sub->error = 1;
+            sub->done = 1;
+            ctx->had_error = 1;
+            ctx->ndone++;
+            return;
         }
-        conn->wbuf = tmp; conn->wbuf_cap = cmdlen;
+        conn->wbuf = tmp;
+        conn->wbuf_cap = cmdlen;
     }
     memcpy(conn->wbuf, cmdbuf, (size_t)cmdlen);
-    conn->wbuf_len = cmdlen; conn->wbuf_off = 0;
+    conn->wbuf_len = cmdlen;
+    conn->wbuf_off = 0;
     fd_watch(w, conn->fd, EL_WRITABLE);
 }
 
 static void fanout_route_single(Worker *w, ClientConn *client, int node_idx) {
     client->using_pbuf = 1;
-    client->node_idx   = node_idx;
+    client->node_idx = node_idx;
     DbGroup *grp = db_group_get(w, client->db);
-    if (!grp) { client_send_error(w,client,"db group error"); close_client(w,client); return; }
+    if (!grp) {
+        client_send_error(w, client, "db group error");
+        close_client(w, client);
+        return;
+    }
     ConnPool *pool = &grp->node_pools[node_idx].pools[POOL_NORMAL];
     PoolConn *conn = pool_acquire_nb(w, pool);
     if (!conn) {
@@ -1101,27 +1347,36 @@ static void fanout_route_single(Worker *w, ClientConn *client, int node_idx) {
 }
 
 void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
-    int is_mset      = (!strcmp(cmd,"MSET") || !strcmp(cmd,"MSETNX"));
-    int is_msetex    = !strcmp(cmd,"MSETEX");
-    int is_json_mset = !strcmp(cmd,"JSON.MSET");
-    int is_json_mget = !strcmp(cmd,"JSON.MGET");
-    int is_lcs       = !strcmp(cmd,"LCS");
+    int is_mset = (!strcmp(cmd, "MSET") || !strcmp(cmd, "MSETNX"));
+    int is_msetex = !strcmp(cmd, "MSETEX");
+    int is_json_mset = !strcmp(cmd, "JSON.MSET");
+    int is_json_mget = !strcmp(cmd, "JSON.MGET");
+    int is_lcs = !strcmp(cmd, "LCS");
 
-    const char *ap[MAX_FANOUT_KEYS * 3 + 4]; int al[MAX_FANOUT_KEYS * 3 + 4];
-    int nargs = resp_extract_all_args(client->pbuf, client->pbuf_len,
-                                       ap, al, MAX_FANOUT_KEYS * 3 + 4);
+    const char *ap[MAX_FANOUT_KEYS * 3 + 4];
+    int al[MAX_FANOUT_KEYS * 3 + 4];
+    int nargs = resp_extract_all_args(client->pbuf, client->pbuf_len, ap, al, MAX_FANOUT_KEYS * 3 + 4);
     if (nargs < 0) {
-        client_send_error(w,client,"protocol error"); FANOUT_RESET_CLIENT(client); return;
+        client_send_error(w, client, "protocol error");
+        FANOUT_RESET_CLIENT(client);
+        return;
     }
 
     int nkeys;
-    if      (is_mset)                    nkeys = nargs / 2;
-    else if (is_msetex || is_json_mset)  nkeys = nargs / 3;
-    else if (is_json_mget)               nkeys = nargs > 0 ? nargs - 1 : 0;
-    else if (is_lcs)                     nkeys = nargs >= 2 ? 2 : nargs;
-    else                                 nkeys = nargs;
+    if (is_mset)
+        nkeys = nargs / 2;
+    else if (is_msetex || is_json_mset)
+        nkeys = nargs / 3;
+    else if (is_json_mget)
+        nkeys = nargs > 0 ? nargs - 1 : 0;
+    else if (is_lcs)
+        nkeys = nargs >= 2 ? 2 : nargs;
+    else
+        nkeys = nargs;
     if (nkeys <= 0) {
-        client_send_error(w,client,"missing key"); FANOUT_RESET_CLIENT(client); return;
+        client_send_error(w, client, "missing key");
+        FANOUT_RESET_CLIENT(client);
+        return;
     }
     if (nkeys > MAX_FANOUT_KEYS) nkeys = MAX_FANOUT_KEYS;
 
@@ -1131,50 +1386,76 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         int slot = key_slot(ap[ki], al[ki]);
         key_node[i] = w->topo.slot_map[slot];
         if (key_node[i] < 0 || key_node[i] >= w->topo.node_count) {
-            client_send_error(w,client,"slot not mapped"); FANOUT_RESET_CLIENT(client); return;
+            client_send_error(w, client, "slot not mapped");
+            FANOUT_RESET_CLIENT(client);
+            return;
         }
     }
 
-    if (nkeys == 1 && !is_msetex) { fanout_route_single(w, client, key_node[0]); return; }
+    if (nkeys == 1 && !is_msetex) {
+        fanout_route_single(w, client, key_node[0]);
+        return;
+    }
 
     if (is_lcs) {
         int lcs_slot0 = key_slot(ap[0], al[0]);
         int lcs_slot1 = key_slot(ap[1], al[1]);
         if (lcs_slot0 == lcs_slot1) {
-            fanout_route_single(w, client, key_node[0]); return;
+            fanout_route_single(w, client, key_node[0]);
+            return;
         }
         int lcs_mode = 0;
         for (int i = 2; i < nargs; i++) {
-            if (al[i] == 3 && (ap[i][0]=='L'||ap[i][0]=='l') &&
-                (ap[i][1]=='E'||ap[i][1]=='e') && (ap[i][2]=='N'||ap[i][2]=='n'))
-                { lcs_mode = 1; break; }
-            if (al[i] == 3 && (ap[i][0]=='I'||ap[i][0]=='i') &&
-                (ap[i][1]=='D'||ap[i][1]=='d') && (ap[i][2]=='X'||ap[i][2]=='x'))
-                { lcs_mode = 2; break; }
+            if (al[i] == 3 && (ap[i][0] == 'L' || ap[i][0] == 'l') && (ap[i][1] == 'E' || ap[i][1] == 'e') &&
+                (ap[i][2] == 'N' || ap[i][2] == 'n')) {
+                lcs_mode = 1;
+                break;
+            }
+            if (al[i] == 3 && (ap[i][0] == 'I' || ap[i][0] == 'i') && (ap[i][1] == 'D' || ap[i][1] == 'd') &&
+                (ap[i][2] == 'X' || ap[i][2] == 'x')) {
+                lcs_mode = 2;
+                break;
+            }
         }
         if (lcs_mode == 2) {
             const char *e = "-ERR LCS IDX is not supported for cross-slot keys\r\n";
-            ssize_t wr = write(client->fd, e, strlen(e)); (void)wr;
-            FANOUT_RESET_CLIENT(client); return;
+            ssize_t wr = write(client->fd, e, strlen(e));
+            (void)wr;
+            FANOUT_RESET_CLIENT(client);
+            return;
         }
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { client_send_error(w,client,"out of memory"); close_client(w,client); return; }
+        if (!ctx) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "%s", cmd);
-        ctx->nsubs = 2; ctx->ndone = 0; ctx->had_error = 0;
+        ctx->nsubs = 2;
+        ctx->ndone = 0;
+        ctx->had_error = 0;
         ctx->lcs_mode = lcs_mode;
         client->fanout_ctx = ctx;
         for (int i = 0; i < 2; i++) {
-            ctx->subs[i].ctx = ctx; ctx->subs[i].sub_idx = i;
-            ctx->subs[i].node_idx = key_node[i]; ctx->subs[i].conn = NULL;
-            ctx->subs[i].rbuf = NULL; ctx->subs[i].rbuf_len = ctx->subs[i].rbuf_cap = 0;
-            ctx->subs[i].done = 0; ctx->subs[i].error = 0;
+            ctx->subs[i].ctx = ctx;
+            ctx->subs[i].sub_idx = i;
+            ctx->subs[i].node_idx = key_node[i];
+            ctx->subs[i].conn = NULL;
+            ctx->subs[i].rbuf = NULL;
+            ctx->subs[i].rbuf_len = ctx->subs[i].rbuf_cap = 0;
+            ctx->subs[i].done = 0;
+            ctx->subs[i].error = 0;
         }
         for (int i = 0; i < 2; i++) {
-            int cmdlen; char *cmdbuf = build_resp_cmd("GET", 3, &ap[i], &al[i], 1, &cmdlen);
+            int cmdlen;
+            char *cmdbuf = build_resp_cmd("GET", 3, &ap[i], &al[i], 1, &cmdlen);
             if (!cmdbuf) {
-                ctx->subs[i].error=1; ctx->subs[i].done=1;
-                ctx->had_error=1; ctx->ndone++; continue;
+                ctx->subs[i].error = 1;
+                ctx->subs[i].done = 1;
+                ctx->had_error = 1;
+                ctx->ndone++;
+                continue;
             }
             fanout_dispatch_sub(w, ctx, i, cmdbuf, cmdlen);
             free(cmdbuf);
@@ -1186,25 +1467,39 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
     if (is_msetex) {
         if (nkeys > MAX_FANOUT_SUBS) nkeys = MAX_FANOUT_SUBS;
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { client_send_error(w,client,"out of memory"); close_client(w,client); return; }
+        if (!ctx) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "%s", cmd);
-        ctx->nsubs = nkeys; ctx->ndone = 0; ctx->had_error = 0;
+        ctx->nsubs = nkeys;
+        ctx->ndone = 0;
+        ctx->had_error = 0;
         client->fanout_ctx = ctx;
         for (int i = 0; i < nkeys; i++) {
-            ctx->subs[i].ctx = ctx; ctx->subs[i].sub_idx = i;
-            ctx->subs[i].node_idx = key_node[i]; ctx->subs[i].conn = NULL;
-            ctx->subs[i].rbuf = NULL; ctx->subs[i].rbuf_len = ctx->subs[i].rbuf_cap = 0;
-            ctx->subs[i].done = 0; ctx->subs[i].error = 0;
+            ctx->subs[i].ctx = ctx;
+            ctx->subs[i].sub_idx = i;
+            ctx->subs[i].node_idx = key_node[i];
+            ctx->subs[i].conn = NULL;
+            ctx->subs[i].rbuf = NULL;
+            ctx->subs[i].rbuf_len = ctx->subs[i].rbuf_cap = 0;
+            ctx->subs[i].done = 0;
+            ctx->subs[i].error = 0;
         }
         for (int i = 0; i < nkeys; i++) {
             int ki = i * 3;
-            const char *sa[3] = { ap[ki], ap[ki+1], ap[ki+2] };
-            int sl[3] = { al[ki], al[ki+1], al[ki+2] };
-            int cmdlen; char *cmdbuf = build_resp_cmd("SETEX", 5, sa, sl, 3, &cmdlen);
+            const char *sa[3] = {ap[ki], ap[ki + 1], ap[ki + 2]};
+            int sl[3] = {al[ki], al[ki + 1], al[ki + 2]};
+            int cmdlen;
+            char *cmdbuf = build_resp_cmd("SETEX", 5, sa, sl, 3, &cmdlen);
             if (!cmdbuf) {
-                ctx->subs[i].error=1; ctx->subs[i].done=1;
-                ctx->had_error=1; ctx->ndone++; continue;
+                ctx->subs[i].error = 1;
+                ctx->subs[i].done = 1;
+                ctx->had_error = 1;
+                ctx->ndone++;
+                continue;
             }
             fanout_dispatch_sub(w, ctx, i, cmdbuf, cmdlen);
             free(cmdbuf);
@@ -1220,15 +1515,19 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         int nsubs = 0;
 
         for (int i = 0; i < nkeys; i++) {
-            int ki  = i * 2;
+            int ki = i * 2;
             int slt = key_slot(ap[ki], al[ki]);
             int found = -1;
             for (int s = 0; s < nsubs; s++)
-                if (sub_slot_val[s] == slt) { found = s; break; }
+                if (sub_slot_val[s] == slt) {
+                    found = s;
+                    break;
+                }
             if (found < 0) {
                 if (nsubs >= MAX_FANOUT_SUBS) {
                     client_send_error(w, client, "too many slot groups");
-                    FANOUT_RESET_CLIENT(client); return;
+                    FANOUT_RESET_CLIENT(client);
+                    return;
                 }
                 sub_slot_val[nsubs] = slt;
                 sub_node_val[nsubs] = key_node[i];
@@ -1238,32 +1537,51 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { client_send_error(w,client,"out of memory"); close_client(w,client); return; }
+        if (!ctx) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "%s", cmd);
-        ctx->nsubs = nsubs; ctx->ndone = 0; ctx->had_error = 0;
+        ctx->nsubs = nsubs;
+        ctx->ndone = 0;
+        ctx->had_error = 0;
         client->fanout_ctx = ctx;
 
         for (int s = 0; s < nsubs; s++) {
-            ctx->subs[s].ctx = ctx; ctx->subs[s].sub_idx = s;
-            ctx->subs[s].node_idx = sub_node_val[s]; ctx->subs[s].conn = NULL;
-            ctx->subs[s].rbuf = NULL; ctx->subs[s].rbuf_len = ctx->subs[s].rbuf_cap = 0;
-            ctx->subs[s].done = 0; ctx->subs[s].error = 0;
+            ctx->subs[s].ctx = ctx;
+            ctx->subs[s].sub_idx = s;
+            ctx->subs[s].node_idx = sub_node_val[s];
+            ctx->subs[s].conn = NULL;
+            ctx->subs[s].rbuf = NULL;
+            ctx->subs[s].rbuf_len = ctx->subs[s].rbuf_cap = 0;
+            ctx->subs[s].done = 0;
+            ctx->subs[s].error = 0;
         }
 
         for (int s = 0; s < nsubs; s++) {
-            const char *sa[MAX_FANOUT_KEYS * 2]; int sl[MAX_FANOUT_KEYS * 2];
+            const char *sa[MAX_FANOUT_KEYS * 2];
+            int sl[MAX_FANOUT_KEYS * 2];
             int sn = 0;
             for (int i = 0; i < nkeys; i++) {
                 if (sub_for_key[i] != s) continue;
                 int ki = i * 2;
-                sa[sn] = ap[ki];   sl[sn] = al[ki];   sn++;
-                sa[sn] = ap[ki+1]; sl[sn] = al[ki+1]; sn++;
+                sa[sn] = ap[ki];
+                sl[sn] = al[ki];
+                sn++;
+                sa[sn] = ap[ki + 1];
+                sl[sn] = al[ki + 1];
+                sn++;
             }
-            int cmdlen; char *cmdbuf = build_resp_cmd(cmd, (int)strlen(cmd), sa, sl, sn, &cmdlen);
+            int cmdlen;
+            char *cmdbuf = build_resp_cmd(cmd, (int)strlen(cmd), sa, sl, sn, &cmdlen);
             if (!cmdbuf) {
-                ctx->subs[s].error=1; ctx->subs[s].done=1;
-                ctx->had_error=1; ctx->ndone++; continue;
+                ctx->subs[s].error = 1;
+                ctx->subs[s].done = 1;
+                ctx->had_error = 1;
+                ctx->ndone++;
+                continue;
             }
             fanout_dispatch_sub(w, ctx, s, cmdbuf, cmdlen);
             free(cmdbuf);
@@ -1282,11 +1600,15 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         int slt = key_slot(ap[i], al[i]);
         int found = -1;
         for (int s = 0; s < nsubs; s++)
-            if (sub_slot_val[s] == slt) { found = s; break; }
+            if (sub_slot_val[s] == slt) {
+                found = s;
+                break;
+            }
         if (found < 0) {
             if (nsubs >= MAX_FANOUT_SUBS) {
                 client_send_error(w, client, "too many slot groups");
-                FANOUT_RESET_CLIENT(client); return;
+                FANOUT_RESET_CLIENT(client);
+                return;
             }
             sub_slot_val[nsubs] = slt;
             sub_node_val[nsubs] = key_node[i];
@@ -1296,15 +1618,22 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
     }
 
     FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-    if (!ctx) { client_send_error(w,client,"out of memory"); close_client(w,client); return; }
+    if (!ctx) {
+        client_send_error(w, client, "out of memory");
+        close_client(w, client);
+        return;
+    }
     ctx->client = client;
     snprintf(ctx->cmd, sizeof(ctx->cmd), "%s", cmd);
-    ctx->nsubs = nsubs; ctx->ndone = 0; ctx->had_error = 0;
+    ctx->nsubs = nsubs;
+    ctx->ndone = 0;
+    ctx->had_error = 0;
     ctx->total_keys = nkeys;
     client->fanout_ctx = ctx;
 
     {
-        int pos_counter[MAX_FANOUT_SUBS]; memset(pos_counter, 0, sizeof(pos_counter));
+        int pos_counter[MAX_FANOUT_SUBS];
+        memset(pos_counter, 0, sizeof(pos_counter));
         for (int i = 0; i < nkeys; i++) {
             int si = sub_for_key[i];
             ctx->mget_sub[i] = si;
@@ -1313,34 +1642,45 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
     }
 
     for (int s = 0; s < nsubs; s++) {
-        ctx->subs[s].ctx = ctx; ctx->subs[s].sub_idx = s;
-        ctx->subs[s].node_idx = sub_node_val[s]; ctx->subs[s].conn = NULL;
-        ctx->subs[s].rbuf = NULL; ctx->subs[s].rbuf_len = ctx->subs[s].rbuf_cap = 0;
-        ctx->subs[s].done = 0; ctx->subs[s].error = 0;
+        ctx->subs[s].ctx = ctx;
+        ctx->subs[s].sub_idx = s;
+        ctx->subs[s].node_idx = sub_node_val[s];
+        ctx->subs[s].conn = NULL;
+        ctx->subs[s].rbuf = NULL;
+        ctx->subs[s].rbuf_len = ctx->subs[s].rbuf_cap = 0;
+        ctx->subs[s].done = 0;
+        ctx->subs[s].error = 0;
     }
 
     for (int s = 0; s < nsubs; s++) {
-        const char *sub_args[MAX_FANOUT_KEYS]; int sub_arglens[MAX_FANOUT_KEYS];
+        const char *sub_args[MAX_FANOUT_KEYS];
+        int sub_arglens[MAX_FANOUT_KEYS];
         int sub_nargs = 0;
         for (int i = 0; i < nkeys; i++) {
             if (sub_for_key[i] != s) continue;
-            sub_args[sub_nargs] = ap[i]; sub_arglens[sub_nargs] = al[i]; sub_nargs++;
+            sub_args[sub_nargs] = ap[i];
+            sub_arglens[sub_nargs] = al[i];
+            sub_nargs++;
         }
         if (is_json_mget && sub_nargs > 0) {
-            sub_args[sub_nargs] = ap[nargs-1]; sub_arglens[sub_nargs] = al[nargs-1]; sub_nargs++;
+            sub_args[sub_nargs] = ap[nargs - 1];
+            sub_arglens[sub_nargs] = al[nargs - 1];
+            sub_nargs++;
         }
-        int cmdlen; char *cmdbuf = build_resp_cmd(cmd, (int)strlen(cmd),
-                                                   sub_args, sub_arglens, sub_nargs, &cmdlen);
+        int cmdlen;
+        char *cmdbuf = build_resp_cmd(cmd, (int)strlen(cmd), sub_args, sub_arglens, sub_nargs, &cmdlen);
         if (!cmdbuf) {
-            ctx->subs[s].error=1; ctx->subs[s].done=1;
-            ctx->had_error=1; ctx->ndone++; continue;
+            ctx->subs[s].error = 1;
+            ctx->subs[s].done = 1;
+            ctx->had_error = 1;
+            ctx->ndone++;
+            continue;
         }
         fanout_dispatch_sub(w, ctx, s, cmdbuf, cmdlen);
         free(cmdbuf);
     }
 
-    if (ctx->ndone == ctx->nsubs)
-        fanout_aggregate_and_reply(w, ctx);
+    if (ctx->ndone == ctx->nsubs) fanout_aggregate_and_reply(w, ctx);
 }
 
 /* ── PUBSUB inspect aggregation helpers ─────────────────────────────── */
@@ -1349,7 +1689,9 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
  * Used for PUBSUB CHANNELS where the same channel can appear on multiple nodes. */
 static char *fanout_agg_pubsub_channels(FanoutCtx *ctx, int *out_len) {
     /* Collect all (pointer, length) pairs from sub-responses */
-    const char *ptrs[4096]; int lens[4096]; int ntotal = 0;
+    const char *ptrs[4096];
+    int lens[4096];
+    int ntotal = 0;
     for (int i = 0; i < ctx->nsubs; i++) {
         FanoutSub *s = &ctx->subs[i];
         if (s->error || !s->rbuf || s->rbuf[0] != '*') continue;
@@ -1362,37 +1704,53 @@ static char *fanout_agg_pubsub_channels(FanoutCtx *ctx, int *out_len) {
             if (el <= 0) break;
             int vl = 0;
             const char *v = resp_parse_bulk_str(s->rbuf + off, el, &vl);
-            if (v) { ptrs[ntotal] = v; lens[ntotal] = vl; ntotal++; }
+            if (v) {
+                ptrs[ntotal] = v;
+                lens[ntotal] = vl;
+                ntotal++;
+            }
             off += el;
         }
     }
 
     /* Deduplicate O(n²): mark duplicates */
-    int keep[4096]; int nkeep = 0, data_bytes = 0;
+    int keep[4096];
+    int nkeep = 0, data_bytes = 0;
     for (int i = 0; i < ntotal; i++) {
         int dup = 0;
         for (int j = 0; j < i; j++) {
-            if (keep[j] && lens[i] == lens[j] &&
-                memcmp(ptrs[i], ptrs[j], (size_t)lens[i]) == 0) { dup = 1; break; }
+            if (keep[j] && lens[i] == lens[j] && memcmp(ptrs[i], ptrs[j], (size_t)lens[i]) == 0) {
+                dup = 1;
+                break;
+            }
         }
         keep[i] = !dup;
-        if (!dup) { nkeep++; data_bytes += 1 + 20 + 2 + lens[i] + 2; } /* $len\r\ndata\r\n */
+        if (!dup) {
+            nkeep++;
+            data_bytes += 1 + 20 + 2 + lens[i] + 2;
+        } /* $len\r\ndata\r\n */
     }
 
-    char hdr[32]; int hdr_len = snprintf(hdr, sizeof(hdr), "*%d\r\n", nkeep);
+    char hdr[32];
+    int hdr_len = snprintf(hdr, sizeof(hdr), "*%d\r\n", nkeep);
     char *out = malloc((size_t)(hdr_len + data_bytes + 1));
     if (!out) return NULL;
     int off = 0;
-    memcpy(out, hdr, (size_t)hdr_len); off += hdr_len;
+    memcpy(out, hdr, (size_t)hdr_len);
+    off += hdr_len;
     for (int i = 0; i < ntotal; i++) {
         if (!keep[i]) continue;
         char elem_hdr[32];
         int ehlen = snprintf(elem_hdr, sizeof(elem_hdr), "$%d\r\n", lens[i]);
-        memcpy(out + off, elem_hdr, (size_t)ehlen); off += ehlen;
-        memcpy(out + off, ptrs[i], (size_t)lens[i]); off += lens[i];
-        out[off++] = '\r'; out[off++] = '\n';
+        memcpy(out + off, elem_hdr, (size_t)ehlen);
+        off += ehlen;
+        memcpy(out + off, ptrs[i], (size_t)lens[i]);
+        off += lens[i];
+        out[off++] = '\r';
+        out[off++] = '\n';
     }
-    *out_len = off; return out;
+    *out_len = off;
+    return out;
 }
 
 /* Look up a channel name in a PUBSUB NUMSUB node response (alternating str/int pairs).
@@ -1424,14 +1782,21 @@ static long long numsub_lookup(const char *resp, int rlen, const char *ch, int c
  * Sums per-channel counts across all nodes. */
 static char *fanout_agg_pubsub_numsub(FanoutCtx *ctx, int *out_len) {
     ClientConn *client = ctx->client;
-    const char *ch_ptrs[256]; int ch_lens[256]; int nchans = 0;
+    const char *ch_ptrs[256];
+    int ch_lens[256];
+    int nchans = 0;
     for (int i = 2; nchans < 256; i++) {
-        const char *ch; int chl;
+        const char *ch;
+        int chl;
         if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, i, &ch, &chl)) break;
-        ch_ptrs[nchans] = ch; ch_lens[nchans] = chl; nchans++;
+        ch_ptrs[nchans] = ch;
+        ch_lens[nchans] = chl;
+        nchans++;
     }
     if (nchans == 0) {
-        char *r = strdup("*0\r\n"); if (r) *out_len = 4; return r;
+        char *r = strdup("*0\r\n");
+        if (r) *out_len = 4;
+        return r;
     }
 
     /* Calculate output size */
@@ -1439,28 +1804,34 @@ static char *fanout_agg_pubsub_numsub(FanoutCtx *ctx, int *out_len) {
     for (int ci = 0; ci < nchans; ci++)
         data_bytes += 1 + 20 + 2 + ch_lens[ci] + 2 + 1 + 20 + 2; /* $len\r\nch\r\n:count\r\n */
 
-    char hdr[32]; int hdr_len = snprintf(hdr, sizeof(hdr), "*%d\r\n", nchans * 2);
+    char hdr[32];
+    int hdr_len = snprintf(hdr, sizeof(hdr), "*%d\r\n", nchans * 2);
     char *out = malloc((size_t)(hdr_len + data_bytes + 1));
     if (!out) return NULL;
     int off = 0;
-    memcpy(out, hdr, (size_t)hdr_len); off += hdr_len;
+    memcpy(out, hdr, (size_t)hdr_len);
+    off += hdr_len;
 
     for (int ci = 0; ci < nchans; ci++) {
         long long total = 0;
         for (int si = 0; si < ctx->nsubs; si++) {
             FanoutSub *s = &ctx->subs[si];
-            if (!s->error && s->rbuf)
-                total += numsub_lookup(s->rbuf, s->rbuf_len, ch_ptrs[ci], ch_lens[ci]);
+            if (!s->error && s->rbuf) total += numsub_lookup(s->rbuf, s->rbuf_len, ch_ptrs[ci], ch_lens[ci]);
         }
         char elem_hdr[32];
         int ehlen = snprintf(elem_hdr, sizeof(elem_hdr), "$%d\r\n", ch_lens[ci]);
-        memcpy(out + off, elem_hdr, (size_t)ehlen); off += ehlen;
-        memcpy(out + off, ch_ptrs[ci], (size_t)ch_lens[ci]); off += ch_lens[ci];
-        out[off++] = '\r'; out[off++] = '\n';
+        memcpy(out + off, elem_hdr, (size_t)ehlen);
+        off += ehlen;
+        memcpy(out + off, ch_ptrs[ci], (size_t)ch_lens[ci]);
+        off += ch_lens[ci];
+        out[off++] = '\r';
+        out[off++] = '\n';
         int clen = snprintf(elem_hdr, sizeof(elem_hdr), ":%lld\r\n", total);
-        memcpy(out + off, elem_hdr, (size_t)clen); off += clen;
+        memcpy(out + off, elem_hdr, (size_t)clen);
+        off += clen;
     }
-    *out_len = off; return out;
+    *out_len = off;
+    return out;
 }
 
 /* Fan-out a pre-built RESP command to a single arbitrary master node (same
@@ -1469,38 +1840,62 @@ static char *fanout_agg_pubsub_numsub(FanoutCtx *ctx, int *out_len) {
  * ctx->subs[0] and gets run through fanout_aggregate_and_reply() for
  * custom post-processing instead of being relayed to the client raw.
  * ctx->cmd must be set by the caller before calling this. */
-static void fanout_one_master(Worker *w, ClientConn *client, FanoutCtx *ctx,
-                               const char *cmd_buf, int cmd_len) {
+static void fanout_one_master(Worker *w, ClientConn *client, FanoutCtx *ctx, const char *cmd_buf, int cmd_len) {
     int ni = topo_first_master(w);
 
-    ctx->nsubs = 1; ctx->ndone = 0; ctx->had_error = 0;
+    ctx->nsubs = 1;
+    ctx->ndone = 0;
+    ctx->had_error = 0;
 
     DbGroup *grp = db_group_get(w, client->db);
     if (!grp) {
-        fanout_ctx_free(ctx); client->fanout_ctx = NULL;
-        client_send_error(w, client, "db group error"); close_client(w, client); return;
+        fanout_ctx_free(ctx);
+        client->fanout_ctx = NULL;
+        client_send_error(w, client, "db group error");
+        close_client(w, client);
+        return;
     }
 
     FanoutSub *sub = &ctx->subs[0];
-    sub->ctx = ctx; sub->sub_idx = 0; sub->node_idx = ni;
-    sub->rbuf = NULL; sub->rbuf_len = sub->rbuf_cap = 0;
-    sub->done = 0; sub->error = 0; sub->conn = NULL;
+    sub->ctx = ctx;
+    sub->sub_idx = 0;
+    sub->node_idx = ni;
+    sub->rbuf = NULL;
+    sub->rbuf_len = sub->rbuf_cap = 0;
+    sub->done = 0;
+    sub->error = 0;
+    sub->conn = NULL;
 
     ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
     PoolConn *conn = pool_acquire_nb(w, pool);
     if (!conn) {
-        sub->error = 1; sub->done = 1; ctx->had_error = 1; ctx->ndone++;
+        sub->error = 1;
+        sub->done = 1;
+        ctx->had_error = 1;
+        ctx->ndone++;
     } else {
         int ok = 1;
         if (conn->wbuf_cap < cmd_len) {
             char *tmp = realloc(conn->wbuf, (size_t)cmd_len);
-            if (!tmp) { pool_release(w, conn); sub->error = 1; sub->done = 1; ctx->had_error = 1; ctx->ndone++; ok = 0; }
-            else { conn->wbuf = tmp; conn->wbuf_cap = cmd_len; }
+            if (!tmp) {
+                pool_release(w, conn);
+                sub->error = 1;
+                sub->done = 1;
+                ctx->had_error = 1;
+                ctx->ndone++;
+                ok = 0;
+            } else {
+                conn->wbuf = tmp;
+                conn->wbuf_cap = cmd_len;
+            }
         }
         if (ok) {
             memcpy(conn->wbuf, cmd_buf, (size_t)cmd_len);
-            conn->wbuf_len = cmd_len; conn->wbuf_off = 0;
-            conn->waiting_client = NULL; conn->fanout_sub = sub; sub->conn = conn;
+            conn->wbuf_len = cmd_len;
+            conn->wbuf_off = 0;
+            conn->waiting_client = NULL;
+            conn->fanout_sub = sub;
+            sub->conn = conn;
             if (conn->fd >= 0 && conn->fd < g_config.max_connection) w->backend_map[conn->fd] = conn;
             fd_watch(w, conn->fd, EL_WRITABLE);
         }
@@ -1512,87 +1907,142 @@ static void fanout_one_master(Worker *w, ClientConn *client, FanoutCtx *ctx,
 /* Fan-out a pre-built RESP command to all master nodes.
  * cmd_buf/cmd_len is the RESP-encoded command to send to each node.
  * ctx->cmd must be set by the caller before calling this. */
-static void fanout_all_masters(Worker *w, ClientConn *client, FanoutCtx *ctx,
-                                const char *cmd_buf, int cmd_len) {
+static void fanout_all_masters(Worker *w, ClientConn *client, FanoutCtx *ctx, const char *cmd_buf, int cmd_len) {
     int target_nodes[MAX_NODES];
     int ntargets = topo_all_masters(w, target_nodes);
 
-    ctx->nsubs = ntargets; ctx->ndone = 0; ctx->had_error = 0;
+    ctx->nsubs = ntargets;
+    ctx->ndone = 0;
+    ctx->had_error = 0;
 
     DbGroup *grp = db_group_get(w, client->db);
     if (!grp) {
-        fanout_ctx_free(ctx); client->fanout_ctx = NULL;
-        client_send_error(w, client, "db group error"); close_client(w, client); return;
+        fanout_ctx_free(ctx);
+        client->fanout_ctx = NULL;
+        client_send_error(w, client, "db group error");
+        close_client(w, client);
+        return;
     }
 
     for (int ti = 0; ti < ntargets; ti++) {
         int ni = target_nodes[ti];
         FanoutSub *sub = &ctx->subs[ti];
-        sub->ctx = ctx; sub->sub_idx = ti; sub->node_idx = ni;
-        sub->rbuf = NULL; sub->rbuf_len = sub->rbuf_cap = 0;
-        sub->done = 0; sub->error = 0; sub->conn = NULL;
+        sub->ctx = ctx;
+        sub->sub_idx = ti;
+        sub->node_idx = ni;
+        sub->rbuf = NULL;
+        sub->rbuf_len = sub->rbuf_cap = 0;
+        sub->done = 0;
+        sub->error = 0;
+        sub->conn = NULL;
 
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
-        if (!conn) { sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++; continue; }
+        if (!conn) {
+            sub->error = 1;
+            sub->done = 1;
+            ctx->had_error = 1;
+            ctx->ndone++;
+            continue;
+        }
 
         if (conn->wbuf_cap < cmd_len) {
             char *tmp = realloc(conn->wbuf, (size_t)cmd_len);
-            if (!tmp) { pool_release(w,conn); sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++; continue; }
-            conn->wbuf = tmp; conn->wbuf_cap = cmd_len;
+            if (!tmp) {
+                pool_release(w, conn);
+                sub->error = 1;
+                sub->done = 1;
+                ctx->had_error = 1;
+                ctx->ndone++;
+                continue;
+            }
+            conn->wbuf = tmp;
+            conn->wbuf_cap = cmd_len;
         }
         memcpy(conn->wbuf, cmd_buf, (size_t)cmd_len);
-        conn->wbuf_len = cmd_len; conn->wbuf_off = 0;
-        conn->waiting_client = NULL; conn->fanout_sub = sub; sub->conn = conn;
+        conn->wbuf_len = cmd_len;
+        conn->wbuf_off = 0;
+        conn->waiting_client = NULL;
+        conn->fanout_sub = sub;
+        sub->conn = conn;
         if (conn->fd >= 0 && conn->fd < g_config.max_connection) w->backend_map[conn->fd] = conn;
         fd_watch(w, conn->fd, EL_WRITABLE);
     }
 
-    if (ctx->ndone == ctx->nsubs)
-        fanout_aggregate_and_reply(w, ctx);
+    if (ctx->ndone == ctx->nsubs) fanout_aggregate_and_reply(w, ctx);
 }
 
 void handle_pubsub_inspect_cmd(Worker *w, ClientConn *client, int cmdlen) {
     (void)cmdlen;
-    const char *sub; int sublen;
+    const char *sub;
+    int sublen;
     if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 1, &sub, &sublen)) {
         client_send_error(w, client, "missing PUBSUB subcommand");
-        client->hbuf_len = 0; return;
+        client->hbuf_len = 0;
+        return;
     }
-    char subcmd[32]; int sclen = sublen < 31 ? sublen : 31;
-    memcpy(subcmd, sub, (size_t)sclen); subcmd[sclen] = '\0';
+    char subcmd[32];
+    int sclen = sublen < 31 ? sublen : 31;
+    memcpy(subcmd, sub, (size_t)sclen);
+    subcmd[sclen] = '\0';
     for (int i = 0; subcmd[i]; i++) subcmd[i] = (char)toupper((unsigned char)subcmd[i]);
 
     /* PUBSUB HELP — route to one master, no fan-out */
     if (!strcmp(subcmd, "HELP")) {
         int ni = topo_first_master(w);
         DbGroup *grp = db_group_get(w, client->db);
-        if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+        if (!grp) {
+            client_send_error(w, client, "db group error");
+            close_client(w, client);
+            return;
+        }
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
         if (!conn) {
-            client->node_idx = ni; client->state = CS_WAITING_CONN;
+            client->node_idx = ni;
+            client->state = CS_WAITING_CONN;
             fd_unwatch(w, client->fd, EL_READABLE);
-            pool_enqueue_waiter(pool, client); return;
+            pool_enqueue_waiter(pool, client);
+            return;
         }
-        conn->waiting_client = client; client->pending_conn = conn;
-        resume_client_after_conn(w, client, conn); return;
+        conn->waiting_client = client;
+        client->pending_conn = conn;
+        resume_client_after_conn(w, client, conn);
+        return;
     }
 
     /* PUBSUB CHANNELS [pattern] — fan-out to all masters, dedup merge */
     if (!strcmp(subcmd, "CHANNELS") || !strcmp(subcmd, "SHARDCHANNELS")) {
-        const char *pattern = NULL; int patlen = 0;
+        const char *pattern = NULL;
+        int patlen = 0;
         resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &pattern, &patlen);
 
-        const char *args[2]; int arglens[2]; int nargs = 1;
-        args[0] = subcmd; arglens[0] = (int)strlen(subcmd);
-        if (pattern && patlen > 0) { args[1] = pattern; arglens[1] = patlen; nargs = 2; }
+        const char *args[2];
+        int arglens[2];
+        int nargs = 1;
+        args[0] = subcmd;
+        arglens[0] = (int)strlen(subcmd);
+        if (pattern && patlen > 0) {
+            args[1] = pattern;
+            arglens[1] = patlen;
+            nargs = 2;
+        }
 
-        int built_len; char *built = build_resp_cmd("PUBSUB", 6, args, arglens, nargs, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        int built_len;
+        char *built = build_resp_cmd("PUBSUB", 6, args, arglens, nargs, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "%s", subcmd);
         client->fanout_ctx = ctx;
@@ -1604,12 +2054,23 @@ void handle_pubsub_inspect_cmd(Worker *w, ClientConn *client, int cmdlen) {
 
     /* PUBSUB NUMPAT — fan-out to all masters, sum results */
     if (!strcmp(subcmd, "NUMPAT")) {
-        const char *args[1] = {"NUMPAT"}; int arglens[1] = {6};
-        int built_len; char *built = build_resp_cmd("PUBSUB", 6, args, arglens, 1, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[1] = {"NUMPAT"};
+        int arglens[1] = {6};
+        int built_len;
+        char *built = build_resp_cmd("PUBSUB", 6, args, arglens, 1, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "NUMPAT");
         client->fanout_ctx = ctx;
@@ -1622,11 +2083,16 @@ void handle_pubsub_inspect_cmd(Worker *w, ClientConn *client, int cmdlen) {
     /* PUBSUB NUMSUB / SHARDNUMSUB [channel...] */
     if (!strcmp(subcmd, "NUMSUB") || !strcmp(subcmd, "SHARDNUMSUB")) {
         /* Parse channel args */
-        const char *ch_ptrs[256]; int ch_lens[256]; int nchans = 0;
+        const char *ch_ptrs[256];
+        int ch_lens[256];
+        int nchans = 0;
         for (int i = 2; nchans < 256; i++) {
-            const char *ch; int chl;
+            const char *ch;
+            int chl;
             if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, i, &ch, &chl)) break;
-            ch_ptrs[nchans] = ch; ch_lens[nchans] = chl; nchans++;
+            ch_ptrs[nchans] = ch;
+            ch_lens[nchans] = chl;
+            nchans++;
         }
 
         /* No channels → return empty array immediately */
@@ -1634,23 +2100,47 @@ void handle_pubsub_inspect_cmd(Worker *w, ClientConn *client, int cmdlen) {
             const char *empty = "*0\r\n";
             if (client->wbuf_cap < 4) {
                 char *tmp = realloc(client->wbuf, 8);
-                if (!tmp) { client_send_error(w, client, "oom"); client->hbuf_len = 0; return; }
-                client->wbuf = tmp; client->wbuf_cap = 8;
+                if (!tmp) {
+                    client_send_error(w, client, "oom");
+                    client->hbuf_len = 0;
+                    return;
+                }
+                client->wbuf = tmp;
+                client->wbuf_cap = 8;
             }
-            memcpy(client->wbuf, empty, 4); client->wbuf_len = 4; client->wbuf_off = 0;
-            client->hbuf_len = 0; client->state = CS_WRITING_RESP;
-            fd_watch(w, client->fd, EL_WRITABLE); return;
+            memcpy(client->wbuf, empty, 4);
+            client->wbuf_len = 4;
+            client->wbuf_off = 0;
+            client->hbuf_len = 0;
+            client->state = CS_WRITING_RESP;
+            fd_watch(w, client->fd, EL_WRITABLE);
+            return;
         }
 
         /* Build RESP command with channels */
-        const char *args[257]; int arglens[257];
-        args[0] = subcmd; arglens[0] = (int)strlen(subcmd);
-        for (int i = 0; i < nchans; i++) { args[i+1] = ch_ptrs[i]; arglens[i+1] = ch_lens[i]; }
-        int built_len; char *built = build_resp_cmd("PUBSUB", 6, args, arglens, nchans + 1, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[257];
+        int arglens[257];
+        args[0] = subcmd;
+        arglens[0] = (int)strlen(subcmd);
+        for (int i = 0; i < nchans; i++) {
+            args[i + 1] = ch_ptrs[i];
+            arglens[i + 1] = ch_lens[i];
+        }
+        int built_len;
+        char *built = build_resp_cmd("PUBSUB", 6, args, arglens, nchans + 1, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "%s", subcmd);
         client->fanout_ctx = ctx;
@@ -1665,39 +2155,62 @@ void handle_pubsub_inspect_cmd(Worker *w, ClientConn *client, int cmdlen) {
 }
 
 void handle_slowlog_cmd(Worker *w, ClientConn *client, int cmdlen) {
-    const char *sub; int sublen;
+    const char *sub;
+    int sublen;
     if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 1, &sub, &sublen)) {
         client_send_error(w, client, "missing SLOWLOG subcommand");
-        client->hbuf_len = 0; return;
+        client->hbuf_len = 0;
+        return;
     }
-    char subcmd[32]; int sclen = sublen < 31 ? sublen : 31;
-    memcpy(subcmd, sub, (size_t)sclen); subcmd[sclen] = '\0';
+    char subcmd[32];
+    int sclen = sublen < 31 ? sublen : 31;
+    memcpy(subcmd, sub, (size_t)sclen);
+    subcmd[sclen] = '\0';
     for (int i = 0; subcmd[i]; i++) subcmd[i] = (char)toupper((unsigned char)subcmd[i]);
 
     /* SLOWLOG HELP — route to a single master node, no fan-out */
     if (!strcmp(subcmd, "HELP")) {
         int ni = topo_first_master(w);
         DbGroup *grp = db_group_get(w, client->db);
-        if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+        if (!grp) {
+            client_send_error(w, client, "db group error");
+            close_client(w, client);
+            return;
+        }
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
         if (!conn) {
-            client->node_idx = ni; client->state = CS_WAITING_CONN;
+            client->node_idx = ni;
+            client->state = CS_WAITING_CONN;
             fd_unwatch(w, client->fd, EL_READABLE);
-            pool_enqueue_waiter(pool, client); return;
+            pool_enqueue_waiter(pool, client);
+            return;
         }
-        conn->waiting_client = client; client->pending_conn = conn;
-        resume_client_after_conn(w, client, conn); return;
+        conn->waiting_client = client;
+        client->pending_conn = conn;
+        resume_client_after_conn(w, client, conn);
+        return;
     }
 
     /* SLOWLOG LEN — fan-out to all master nodes, sum the per-node counts */
     if (!strcmp(subcmd, "LEN")) {
-        const char *args[1] = {"LEN"}; int arglens[1] = {3};
-        int built_len; char *built = build_resp_cmd("SLOWLOG", 7, args, arglens, 1, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[1] = {"LEN"};
+        int arglens[1] = {3};
+        int built_len;
+        char *built = build_resp_cmd("SLOWLOG", 7, args, arglens, 1, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "LEN");
         client->fanout_ctx = ctx;
@@ -1713,16 +2226,24 @@ void handle_slowlog_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * an invalid count comes back as a backend error that is relayed as-is. */
     if (!strcmp(subcmd, "GET")) {
         long long count = 10;
-        const char *carg; int carglen;
+        const char *carg;
+        int carglen;
         if (resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &carg, &carglen)) {
-            char tmp[32]; int tl = carglen < 31 ? carglen : 31;
-            memcpy(tmp, carg, (size_t)tl); tmp[tl] = '\0';
-            char *end; count = strtoll(tmp, &end, 10);
+            char tmp[32];
+            int tl = carglen < 31 ? carglen : 31;
+            memcpy(tmp, carg, (size_t)tl);
+            tmp[tl] = '\0';
+            char *end;
+            count = strtoll(tmp, &end, 10);
             if (end == tmp || *end || count < -1) count = -1;
         }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         ctx->slowlog_count = count;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "SLOWLOG_GET");
@@ -1734,12 +2255,23 @@ void handle_slowlog_cmd(Worker *w, ClientConn *client, int cmdlen) {
 
     /* SLOWLOG RESET — fan-out to all master nodes, reply +OK if all succeed */
     if (!strcmp(subcmd, "RESET")) {
-        const char *args[1] = {"RESET"}; int arglens[1] = {5};
-        int built_len; char *built = build_resp_cmd("SLOWLOG", 7, args, arglens, 1, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[1] = {"RESET"};
+        int arglens[1] = {5};
+        int built_len;
+        char *built = build_resp_cmd("SLOWLOG", 7, args, arglens, 1, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "RESET");
         client->fanout_ctx = ctx;
@@ -1754,29 +2286,41 @@ void handle_slowlog_cmd(Worker *w, ClientConn *client, int cmdlen) {
 }
 
 void handle_commandlog_cmd(Worker *w, ClientConn *client, int cmdlen) {
-    const char *sub; int sublen;
+    const char *sub;
+    int sublen;
     if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 1, &sub, &sublen)) {
         client_send_error(w, client, "missing COMMANDLOG subcommand");
-        client->hbuf_len = 0; return;
+        client->hbuf_len = 0;
+        return;
     }
-    char subcmd[32]; int sclen = sublen < 31 ? sublen : 31;
-    memcpy(subcmd, sub, (size_t)sclen); subcmd[sclen] = '\0';
+    char subcmd[32];
+    int sclen = sublen < 31 ? sublen : 31;
+    memcpy(subcmd, sub, (size_t)sclen);
+    subcmd[sclen] = '\0';
     for (int i = 0; subcmd[i]; i++) subcmd[i] = (char)toupper((unsigned char)subcmd[i]);
 
     /* COMMANDLOG HELP — route to a single master node, no fan-out */
     if (!strcmp(subcmd, "HELP")) {
         int ni = topo_first_master(w);
         DbGroup *grp = db_group_get(w, client->db);
-        if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+        if (!grp) {
+            client_send_error(w, client, "db group error");
+            close_client(w, client);
+            return;
+        }
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
         if (!conn) {
-            client->node_idx = ni; client->state = CS_WAITING_CONN;
+            client->node_idx = ni;
+            client->state = CS_WAITING_CONN;
             fd_unwatch(w, client->fd, EL_READABLE);
-            pool_enqueue_waiter(pool, client); return;
+            pool_enqueue_waiter(pool, client);
+            return;
         }
-        conn->waiting_client = client; client->pending_conn = conn;
-        resume_client_after_conn(w, client, conn); return;
+        conn->waiting_client = client;
+        client->pending_conn = conn;
+        resume_client_after_conn(w, client, conn);
+        return;
     }
 
     /* COMMANDLOG LEN <slow|large-request|large-reply> — fan-out to all master
@@ -1784,7 +2328,11 @@ void handle_commandlog_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * from the client's original request; the backend validates it. */
     if (!strcmp(subcmd, "LEN")) {
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "LEN");
         client->fanout_ctx = ctx;
@@ -1800,16 +2348,24 @@ void handle_commandlog_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * validates count/type itself; errors are relayed as-is. */
     if (!strcmp(subcmd, "GET")) {
         long long count = -1;
-        const char *carg; int carglen;
+        const char *carg;
+        int carglen;
         if (resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &carg, &carglen)) {
-            char tmp[32]; int tl = carglen < 31 ? carglen : 31;
-            memcpy(tmp, carg, (size_t)tl); tmp[tl] = '\0';
-            char *end; count = strtoll(tmp, &end, 10);
+            char tmp[32];
+            int tl = carglen < 31 ? carglen : 31;
+            memcpy(tmp, carg, (size_t)tl);
+            tmp[tl] = '\0';
+            char *end;
+            count = strtoll(tmp, &end, 10);
             if (end == tmp || *end || count < -1) count = -1;
         }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         ctx->slowlog_count = count;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "COMMANDLOG_GET");
@@ -1823,7 +2379,11 @@ void handle_commandlog_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * master nodes, reply +OK if all succeed. */
     if (!strcmp(subcmd, "RESET")) {
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "RESET");
         client->fanout_ctx = ctx;
@@ -1838,29 +2398,41 @@ void handle_commandlog_cmd(Worker *w, ClientConn *client, int cmdlen) {
 
 void handle_module_cmd(Worker *w, ClientConn *client, int cmdlen) {
     (void)cmdlen;
-    const char *sub; int sublen;
+    const char *sub;
+    int sublen;
     if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 1, &sub, &sublen)) {
         client_send_error(w, client, "missing MODULE subcommand");
-        client->hbuf_len = 0; return;
+        client->hbuf_len = 0;
+        return;
     }
-    char subcmd[32]; int sclen = sublen < 31 ? sublen : 31;
-    memcpy(subcmd, sub, (size_t)sclen); subcmd[sclen] = '\0';
+    char subcmd[32];
+    int sclen = sublen < 31 ? sublen : 31;
+    memcpy(subcmd, sub, (size_t)sclen);
+    subcmd[sclen] = '\0';
     for (int i = 0; subcmd[i]; i++) subcmd[i] = (char)toupper((unsigned char)subcmd[i]);
 
     /* MODULE LIST — forward to any one master node, relay the reply as-is */
     if (!strcmp(subcmd, "LIST")) {
         int ni = topo_first_master(w);
         DbGroup *grp = db_group_get(w, client->db);
-        if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+        if (!grp) {
+            client_send_error(w, client, "db group error");
+            close_client(w, client);
+            return;
+        }
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
         if (!conn) {
-            client->node_idx = ni; client->state = CS_WAITING_CONN;
+            client->node_idx = ni;
+            client->state = CS_WAITING_CONN;
             fd_unwatch(w, client->fd, EL_READABLE);
-            pool_enqueue_waiter(pool, client); return;
+            pool_enqueue_waiter(pool, client);
+            return;
         }
-        conn->waiting_client = client; client->pending_conn = conn;
-        resume_client_after_conn(w, client, conn); return;
+        conn->waiting_client = client;
+        client->pending_conn = conn;
+        resume_client_after_conn(w, client, conn);
+        return;
     }
 
     client_send_error(w, client, "unknown MODULE subcommand");
@@ -1872,16 +2444,23 @@ void send_multibulk_reply(Worker *w, ClientConn *client, const char **lines, int
     for (int i = 0; i < n; i++) total += 32 + (int)strlen(lines[i]);
     if (client->wbuf_cap < total) {
         char *tmp = realloc(client->wbuf, (size_t)total);
-        if (!tmp) { client_send_error(w, client, "oom"); client->hbuf_len = 0; return; }
-        client->wbuf = tmp; client->wbuf_cap = total;
+        if (!tmp) {
+            client_send_error(w, client, "oom");
+            client->hbuf_len = 0;
+            return;
+        }
+        client->wbuf = tmp;
+        client->wbuf_cap = total;
     }
     int off = snprintf(client->wbuf, (size_t)client->wbuf_cap, "*%d\r\n", n);
     for (int i = 0; i < n; i++) {
-        off += snprintf(client->wbuf + off, (size_t)(client->wbuf_cap - off),
-                         "$%d\r\n%s\r\n", (int)strlen(lines[i]), lines[i]);
+        off += snprintf(client->wbuf + off, (size_t)(client->wbuf_cap - off), "$%d\r\n%s\r\n", (int)strlen(lines[i]),
+                        lines[i]);
     }
-    client->wbuf_len = off; client->wbuf_off = 0;
-    client->hbuf_len = 0; client->state = CS_WRITING_RESP;
+    client->wbuf_len = off;
+    client->wbuf_off = 0;
+    client->hbuf_len = 0;
+    client->state = CS_WRITING_RESP;
     fd_watch(w, client->fd, EL_WRITABLE);
 }
 
@@ -1890,19 +2469,20 @@ void send_multibulk_reply(Worker *w, ClientConn *client, const char **lines, int
  * reuse it per-connection in the future. */
 static int format_client_info_line(Worker *w, ClientConn *client, char *out, int cap) {
     time_t now = time(NULL);
-    char events[3]; int ei = 0;
+    char events[3];
+    int ei = 0;
     if (w->fd_mask[client->fd] & EL_READABLE) events[ei++] = 'r';
     if (w->fd_mask[client->fd] & EL_WRITABLE) events[ei++] = 'w';
     events[ei] = '\0';
     const char *user = client->acl_authenticated ? client->acl_user : "default";
 
     return snprintf(out, (size_t)cap,
-        "id=%lld addr=%s laddr=%s fd=%d name=%s age=%lld idle=%lld flags=N db=%d "
-        "sub=%d psub=%d ssub=%d multi=%d watch=%d events=%s cmd=%s user=%s resp=%d",
-        client->id, client->addr, client->laddr, client->fd, client->name,
-        (long long)(now - client->connect_time), (long long)(now - client->last_interaction),
-        client->db, client->sub_count, client->psub_count, client->ssub_count,
-        client->multi_count, client->watch_count, events, client->last_cmd, user, client->resp);
+                    "id=%lld addr=%s laddr=%s fd=%d name=%s age=%lld idle=%lld flags=N db=%d "
+                    "sub=%d psub=%d ssub=%d multi=%d watch=%d events=%s cmd=%s user=%s resp=%d",
+                    client->id, client->addr, client->laddr, client->fd, client->name,
+                    (long long)(now - client->connect_time), (long long)(now - client->last_interaction), client->db,
+                    client->sub_count, client->psub_count, client->ssub_count, client->multi_count, client->watch_count,
+                    events, client->last_cmd, user, client->resp);
 }
 
 /* Validates a client name (CLIENT SETNAME / HELLO ... SETNAME) without
@@ -1912,13 +2492,15 @@ static int format_client_info_line(Worker *w, ClientConn *client, char *out, int
 int client_name_check(Worker *w, ClientConn *client, const char *name, int namelen) {
     if (namelen >= (int)sizeof(client->name)) {
         client_send_error(w, client, "Client names cannot exceed 63 characters");
-        client->hbuf_len = 0; return -1;
+        client->hbuf_len = 0;
+        return -1;
     }
     for (int i = 0; i < namelen; i++) {
         unsigned char c = (unsigned char)name[i];
         if (c < '!' || c > '~') {
             client_send_error(w, client, "Client names cannot contain spaces, newlines or special characters.");
-            client->hbuf_len = 0; return -1;
+            client->hbuf_len = 0;
+            return -1;
         }
     }
     return 0;
@@ -1936,13 +2518,17 @@ int client_set_name(Worker *w, ClientConn *client, const char *name, int namelen
 
 void handle_client_cmd(Worker *w, ClientConn *client, int cmdlen) {
     (void)cmdlen;
-    const char *sub; int sublen;
+    const char *sub;
+    int sublen;
     if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 1, &sub, &sublen)) {
         client_send_error(w, client, "missing CLIENT subcommand");
-        client->hbuf_len = 0; return;
+        client->hbuf_len = 0;
+        return;
     }
-    char subcmd[32]; int sclen = sublen < 31 ? sublen : 31;
-    memcpy(subcmd, sub, (size_t)sclen); subcmd[sclen] = '\0';
+    char subcmd[32];
+    int sclen = sublen < 31 ? sublen : 31;
+    memcpy(subcmd, sub, (size_t)sclen);
+    subcmd[sclen] = '\0';
     for (int i = 0; subcmd[i]; i++) subcmd[i] = (char)toupper((unsigned char)subcmd[i]);
 
     /* CLIENT HELP — answered directly by the proxy, no backend round-trip */
@@ -2023,12 +2609,19 @@ void handle_client_cmd(Worker *w, ClientConn *client, int cmdlen) {
         int idlen = snprintf(idbuf, sizeof(idbuf), ":%lld\r\n", client->id);
         if (client->wbuf_cap < idlen) {
             char *tmp = realloc(client->wbuf, (size_t)idlen);
-            if (!tmp) { client_send_error(w, client, "oom"); client->hbuf_len = 0; return; }
-            client->wbuf = tmp; client->wbuf_cap = idlen;
+            if (!tmp) {
+                client_send_error(w, client, "oom");
+                client->hbuf_len = 0;
+                return;
+            }
+            client->wbuf = tmp;
+            client->wbuf_cap = idlen;
         }
         memcpy(client->wbuf, idbuf, (size_t)idlen);
-        client->wbuf_len = idlen; client->wbuf_off = 0;
-        client->hbuf_len = 0; client->state = CS_WRITING_RESP;
+        client->wbuf_len = idlen;
+        client->wbuf_off = 0;
+        client->hbuf_len = 0;
+        client->state = CS_WRITING_RESP;
         fd_watch(w, client->fd, EL_WRITABLE);
         return;
     }
@@ -2039,15 +2632,23 @@ void handle_client_cmd(Worker *w, ClientConn *client, int cmdlen) {
         int total = client->namelen + 16;
         if (client->wbuf_cap < total) {
             char *tmp = realloc(client->wbuf, (size_t)total);
-            if (!tmp) { client_send_error(w, client, "oom"); client->hbuf_len = 0; return; }
-            client->wbuf = tmp; client->wbuf_cap = total;
+            if (!tmp) {
+                client_send_error(w, client, "oom");
+                client->hbuf_len = 0;
+                return;
+            }
+            client->wbuf = tmp;
+            client->wbuf_cap = total;
         }
         int off = snprintf(client->wbuf, (size_t)client->wbuf_cap, "$%d\r\n", client->namelen);
         memcpy(client->wbuf + off, client->name, (size_t)client->namelen);
         off += client->namelen;
-        client->wbuf[off++] = '\r'; client->wbuf[off++] = '\n';
-        client->wbuf_len = off; client->wbuf_off = 0;
-        client->hbuf_len = 0; client->state = CS_WRITING_RESP;
+        client->wbuf[off++] = '\r';
+        client->wbuf[off++] = '\n';
+        client->wbuf_len = off;
+        client->wbuf_off = 0;
+        client->hbuf_len = 0;
+        client->state = CS_WRITING_RESP;
         fd_watch(w, client->fd, EL_WRITABLE);
         return;
     }
@@ -2058,22 +2659,30 @@ void handle_client_cmd(Worker *w, ClientConn *client, int cmdlen) {
         char line[1024];
         int len = format_client_info_line(w, client, line, sizeof(line) - 1);
         if (len < 0) len = 0;
-        if (len > (int)sizeof(line) - 2) len = (int)sizeof(line) - 2;  /* snprintf truncated */
+        if (len > (int)sizeof(line) - 2) len = (int)sizeof(line) - 2; /* snprintf truncated */
         /* Like Valkey, the bulk payload ends with '\n' so redis-cli breaks
          * the line before printing the next prompt. */
         line[len++] = '\n';
         int total = len + 16;
         if (client->wbuf_cap < total) {
             char *tmp = realloc(client->wbuf, (size_t)total);
-            if (!tmp) { client_send_error(w, client, "oom"); client->hbuf_len = 0; return; }
-            client->wbuf = tmp; client->wbuf_cap = total;
+            if (!tmp) {
+                client_send_error(w, client, "oom");
+                client->hbuf_len = 0;
+                return;
+            }
+            client->wbuf = tmp;
+            client->wbuf_cap = total;
         }
         int off = snprintf(client->wbuf, (size_t)client->wbuf_cap, "$%d\r\n", len);
         memcpy(client->wbuf + off, line, (size_t)len);
         off += len;
-        client->wbuf[off++] = '\r'; client->wbuf[off++] = '\n';
-        client->wbuf_len = off; client->wbuf_off = 0;
-        client->hbuf_len = 0; client->state = CS_WRITING_RESP;
+        client->wbuf[off++] = '\r';
+        client->wbuf[off++] = '\n';
+        client->wbuf_len = off;
+        client->wbuf_off = 0;
+        client->hbuf_len = 0;
+        client->state = CS_WRITING_RESP;
         fd_watch(w, client->fd, EL_WRITABLE);
         return;
     }
@@ -2081,21 +2690,31 @@ void handle_client_cmd(Worker *w, ClientConn *client, int cmdlen) {
     /* CLIENT SETNAME <name> — stored on this ClientConn only, never sent to
      * a backend; names may not contain spaces or newlines. */
     if (!strcmp(subcmd, "SETNAME")) {
-        const char *name; int namelen;
+        const char *name;
+        int namelen;
         if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &name, &namelen)) {
             client_send_error(w, client, "wrong number of arguments for 'client|setname' command");
-            client->hbuf_len = 0; return;
+            client->hbuf_len = 0;
+            return;
         }
         if (client_set_name(w, client, name, namelen) < 0) return;
 
         const char *ok = "+OK\r\n";
         if (client->wbuf_cap < 5) {
             char *tmp = realloc(client->wbuf, 8);
-            if (!tmp) { client_send_error(w, client, "oom"); client->hbuf_len = 0; return; }
-            client->wbuf = tmp; client->wbuf_cap = 8;
+            if (!tmp) {
+                client_send_error(w, client, "oom");
+                client->hbuf_len = 0;
+                return;
+            }
+            client->wbuf = tmp;
+            client->wbuf_cap = 8;
         }
-        memcpy(client->wbuf, ok, 5); client->wbuf_len = 5; client->wbuf_off = 0;
-        client->hbuf_len = 0; client->state = CS_WRITING_RESP;
+        memcpy(client->wbuf, ok, 5);
+        client->wbuf_len = 5;
+        client->wbuf_off = 0;
+        client->hbuf_len = 0;
+        client->state = CS_WRITING_RESP;
         fd_watch(w, client->fd, EL_WRITABLE);
         return;
     }
@@ -2106,13 +2725,17 @@ void handle_client_cmd(Worker *w, ClientConn *client, int cmdlen) {
 
 void handle_script_cmd(Worker *w, ClientConn *client, int cmdlen) {
     (void)cmdlen;
-    const char *sub; int sublen;
+    const char *sub;
+    int sublen;
     if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 1, &sub, &sublen)) {
         client_send_error(w, client, "missing SCRIPT subcommand");
-        client->hbuf_len = 0; return;
+        client->hbuf_len = 0;
+        return;
     }
-    char subcmd[32]; int sclen = sublen < 31 ? sublen : 31;
-    memcpy(subcmd, sub, (size_t)sclen); subcmd[sclen] = '\0';
+    char subcmd[32];
+    int sclen = sublen < 31 ? sublen : 31;
+    memcpy(subcmd, sub, (size_t)sclen);
+    subcmd[sclen] = '\0';
     for (int i = 0; subcmd[i]; i++) subcmd[i] = (char)toupper((unsigned char)subcmd[i]);
 
     /* SCRIPT HELP — answered directly by the proxy, no backend round-trip */
@@ -2146,7 +2769,11 @@ void handle_script_cmd(Worker *w, ClientConn *client, int cmdlen) {
     if (!strcmp(subcmd, "EXISTS") || !strcmp(subcmd, "SHOW")) {
         int ni = topo_first_master(w);
         DbGroup *grp = db_group_get(w, client->db);
-        if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+        if (!grp) {
+            client_send_error(w, client, "db group error");
+            close_client(w, client);
+            return;
+        }
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
         if (!conn) {
@@ -2156,7 +2783,8 @@ void handle_script_cmd(Worker *w, ClientConn *client, int cmdlen) {
             pool_enqueue_waiter(pool, client);
             return;
         }
-        conn->waiting_client = client; client->pending_conn = conn;
+        conn->waiting_client = client;
+        client->pending_conn = conn;
         resume_client_after_conn(w, client, conn);
         return;
     }
@@ -2164,12 +2792,23 @@ void handle_script_cmd(Worker *w, ClientConn *client, int cmdlen) {
     /* SCRIPT KILL — fan-out to all master nodes; the client sees success if
      * ANY node reports success, and failure only if ALL nodes fail. */
     if (!strcmp(subcmd, "KILL")) {
-        const char *args[1] = {"KILL"}; int arglens[1] = {4};
-        int built_len; char *built = build_resp_cmd("SCRIPT", 6, args, arglens, 1, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[1] = {"KILL"};
+        int arglens[1] = {4};
+        int built_len;
+        char *built = build_resp_cmd("SCRIPT", 6, args, arglens, 1, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "SCRIPT_KILL");
         client->fanout_ctx = ctx;
@@ -2183,12 +2822,23 @@ void handle_script_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * argument, always forwarded as SCRIPT FLUSH ASYNC to every master
      * node, and the client always sees success. */
     if (!strcmp(subcmd, "FLUSH")) {
-        const char *args[2] = {"FLUSH", "ASYNC"}; int arglens[2] = {5, 5};
-        int built_len; char *built = build_resp_cmd("SCRIPT", 6, args, arglens, 2, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[2] = {"FLUSH", "ASYNC"};
+        int arglens[2] = {5, 5};
+        int built_len;
+        char *built = build_resp_cmd("SCRIPT", 6, args, arglens, 2, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "SCRIPT_FLUSH");
         client->fanout_ctx = ctx;
@@ -2202,17 +2852,30 @@ void handle_script_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * EVALSHA on any shard can find it; every node returns the same sha1,
      * so only one value is relayed back to the client. */
     if (!strcmp(subcmd, "LOAD")) {
-        const char *script; int scriptlen;
+        const char *script;
+        int scriptlen;
         if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &script, &scriptlen)) {
             client_send_error(w, client, "wrong number of arguments for 'script|load' command");
-            client->hbuf_len = 0; return;
+            client->hbuf_len = 0;
+            return;
         }
-        const char *args[2] = {"LOAD", script}; int arglens[2] = {4, scriptlen};
-        int built_len; char *built = build_resp_cmd("SCRIPT", 6, args, arglens, 2, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[2] = {"LOAD", script};
+        int arglens[2] = {4, scriptlen};
+        int built_len;
+        char *built = build_resp_cmd("SCRIPT", 6, args, arglens, 2, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "SCRIPT_LOAD");
         client->fanout_ctx = ctx;
@@ -2228,13 +2891,17 @@ void handle_script_cmd(Worker *w, ClientConn *client, int cmdlen) {
 
 void handle_function_cmd(Worker *w, ClientConn *client, int cmdlen) {
     (void)cmdlen;
-    const char *sub; int sublen;
+    const char *sub;
+    int sublen;
     if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 1, &sub, &sublen)) {
         client_send_error(w, client, "missing FUNCTION subcommand");
-        client->hbuf_len = 0; return;
+        client->hbuf_len = 0;
+        return;
     }
-    char subcmd[32]; int sclen = sublen < 31 ? sublen : 31;
-    memcpy(subcmd, sub, (size_t)sclen); subcmd[sclen] = '\0';
+    char subcmd[32];
+    int sclen = sublen < 31 ? sublen : 31;
+    memcpy(subcmd, sub, (size_t)sclen);
+    subcmd[sclen] = '\0';
     for (int i = 0; subcmd[i]; i++) subcmd[i] = (char)toupper((unsigned char)subcmd[i]);
 
     /* FUNCTION HELP — answered directly by the proxy, no backend round-trip */
@@ -2280,7 +2947,11 @@ void handle_function_cmd(Worker *w, ClientConn *client, int cmdlen) {
     if (!strcmp(subcmd, "LIST")) {
         int ni = topo_first_master(w);
         DbGroup *grp = db_group_get(w, client->db);
-        if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+        if (!grp) {
+            client_send_error(w, client, "db group error");
+            close_client(w, client);
+            return;
+        }
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
         if (!conn) {
@@ -2290,7 +2961,8 @@ void handle_function_cmd(Worker *w, ClientConn *client, int cmdlen) {
             pool_enqueue_waiter(pool, client);
             return;
         }
-        conn->waiting_client = client; client->pending_conn = conn;
+        conn->waiting_client = client;
+        client->pending_conn = conn;
         resume_client_after_conn(w, client, conn);
         return;
     }
@@ -2299,12 +2971,23 @@ void handle_function_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * reports success (only one shard can have a script actually running
      * for a given client at a time), failure only if ALL nodes fail. */
     if (!strcmp(subcmd, "KILL")) {
-        const char *args[1] = {"KILL"}; int arglens[1] = {4};
-        int built_len; char *built = build_resp_cmd("FUNCTION", 8, args, arglens, 1, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[1] = {"KILL"};
+        int arglens[1] = {4};
+        int built_len;
+        char *built = build_resp_cmd("FUNCTION", 8, args, arglens, 1, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "FUNCTION_KILL");
         client->fanout_ctx = ctx;
@@ -2318,12 +3001,23 @@ void handle_function_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * argument, always forwarded as FUNCTION FLUSH ASYNC to every master
      * node, and the client always sees success. */
     if (!strcmp(subcmd, "FLUSH")) {
-        const char *args[2] = {"FLUSH", "ASYNC"}; int arglens[2] = {5, 5};
-        int built_len; char *built = build_resp_cmd("FUNCTION", 8, args, arglens, 2, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[2] = {"FLUSH", "ASYNC"};
+        int arglens[2] = {5, 5};
+        int built_len;
+        char *built = build_resp_cmd("FUNCTION", 8, args, arglens, 2, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "FUNCTION_FLUSH");
         client->fanout_ctx = ctx;
@@ -2337,17 +3031,30 @@ void handle_function_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * library is removed everywhere; the client sees success only if every
      * node succeeds, keeping library state identical across shards. */
     if (!strcmp(subcmd, "DELETE")) {
-        const char *libname; int libnamelen;
+        const char *libname;
+        int libnamelen;
         if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &libname, &libnamelen)) {
             client_send_error(w, client, "wrong number of arguments for 'function|delete' command");
-            client->hbuf_len = 0; return;
+            client->hbuf_len = 0;
+            return;
         }
-        const char *args[2] = {"DELETE", libname}; int arglens[2] = {6, libnamelen};
-        int built_len; char *built = build_resp_cmd("FUNCTION", 8, args, arglens, 2, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[2] = {"DELETE", libname};
+        int arglens[2] = {6, libnamelen};
+        int built_len;
+        char *built = build_resp_cmd("FUNCTION", 8, args, arglens, 2, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "FUNCTION_DELETE");
         client->fanout_ctx = ctx;
@@ -2361,12 +3068,23 @@ void handle_function_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * state is reported separately rather than merged (see
      * fanout_agg_function_stats). */
     if (!strcmp(subcmd, "STATS")) {
-        const char *args[1] = {"STATS"}; int arglens[1] = {5};
-        int built_len; char *built = build_resp_cmd("FUNCTION", 8, args, arglens, 1, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[1] = {"STATS"};
+        int arglens[1] = {5};
+        int built_len;
+        char *built = build_resp_cmd("FUNCTION", 8, args, arglens, 1, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "FUNCTION_STATS");
         client->fanout_ctx = ctx;
@@ -2380,34 +3098,51 @@ void handle_function_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * subsequent FCALL on any shard finds the library; the client sees
      * success only if every node succeeds. */
     if (!strcmp(subcmd, "LOAD")) {
-        const char *arg2; int arg2len;
+        const char *arg2;
+        int arg2len;
         if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &arg2, &arg2len)) {
             client_send_error(w, client, "wrong number of arguments for 'function|load' command");
-            client->hbuf_len = 0; return;
+            client->hbuf_len = 0;
+            return;
         }
         int replace = (arg2len == 7 && strncasecmp(arg2, "REPLACE", 7) == 0);
-        const char *code; int codelen;
+        const char *code;
+        int codelen;
         if (replace) {
             if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 3, &code, &codelen)) {
                 client_send_error(w, client, "wrong number of arguments for 'function|load' command");
-                client->hbuf_len = 0; return;
+                client->hbuf_len = 0;
+                return;
             }
         } else {
-            code = arg2; codelen = arg2len;
+            code = arg2;
+            codelen = arg2len;
         }
 
-        int built_len; char *built;
+        int built_len;
+        char *built;
         if (replace) {
-            const char *args[3] = {"LOAD", "REPLACE", code}; int arglens[3] = {4, 7, codelen};
+            const char *args[3] = {"LOAD", "REPLACE", code};
+            int arglens[3] = {4, 7, codelen};
             built = build_resp_cmd("FUNCTION", 8, args, arglens, 3, &built_len);
         } else {
-            const char *args[2] = {"LOAD", code}; int arglens[2] = {4, codelen};
+            const char *args[2] = {"LOAD", code};
+            int arglens[2] = {4, codelen};
             built = build_resp_cmd("FUNCTION", 8, args, arglens, 2, &built_len);
         }
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "FUNCTION_LOAD");
         client->fanout_ctx = ctx;
@@ -2427,24 +3162,36 @@ static void send_bulk_reply(Worker *w, ClientConn *client, const char *data, int
     int reply_len = hdr_len + len + 2;
     if (client->wbuf_cap < reply_len) {
         char *tmp = realloc(client->wbuf, (size_t)reply_len);
-        if (!tmp) { client_send_error(w, client, "oom"); client->hbuf_len = 0; return; }
-        client->wbuf = tmp; client->wbuf_cap = reply_len;
+        if (!tmp) {
+            client_send_error(w, client, "oom");
+            client->hbuf_len = 0;
+            return;
+        }
+        client->wbuf = tmp;
+        client->wbuf_cap = reply_len;
     }
     memcpy(client->wbuf, hdr, hdr_len);
     memcpy(client->wbuf + hdr_len, data, len);
     memcpy(client->wbuf + hdr_len + len, "\r\n", 2);
-    client->wbuf_len = reply_len; client->wbuf_off = 0;
-    client->hbuf_len = 0; client->state = CS_WRITING_RESP;
+    client->wbuf_len = reply_len;
+    client->wbuf_off = 0;
+    client->hbuf_len = 0;
+    client->state = CS_WRITING_RESP;
     fd_watch(w, client->fd, EL_WRITABLE);
 }
 
 void handle_command_cmd(Worker *w, ClientConn *client, int cmdlen) {
-    const char *sub; int sublen;
+    const char *sub;
+    int sublen;
     /* Bare COMMAND (no subcommand) has the same reply shape as COMMAND INFO
      * with no arguments, so it reuses that path verbatim. */
     if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 1, &sub, &sublen)) {
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "CMDINFO_ALL");
         client->fanout_ctx = ctx;
@@ -2452,35 +3199,50 @@ void handle_command_cmd(Worker *w, ClientConn *client, int cmdlen) {
         fanout_one_master(w, client, ctx, client->hbuf, cmdlen);
         return;
     }
-    char subcmd[32]; int sclen = sublen < 31 ? sublen : 31;
-    memcpy(subcmd, sub, (size_t)sclen); subcmd[sclen] = '\0';
+    char subcmd[32];
+    int sclen = sublen < 31 ? sublen : 31;
+    memcpy(subcmd, sub, (size_t)sclen);
+    subcmd[sclen] = '\0';
     for (int i = 0; subcmd[i]; i++) subcmd[i] = (char)toupper((unsigned char)subcmd[i]);
 
     /* COMMAND HELP — forward to any one master node, relay the reply as-is */
     if (!strcmp(subcmd, "HELP")) {
         int ni = topo_first_master(w);
         DbGroup *grp = db_group_get(w, client->db);
-        if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+        if (!grp) {
+            client_send_error(w, client, "db group error");
+            close_client(w, client);
+            return;
+        }
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
         if (!conn) {
-            client->node_idx = ni; client->state = CS_WAITING_CONN;
+            client->node_idx = ni;
+            client->state = CS_WAITING_CONN;
             fd_unwatch(w, client->fd, EL_READABLE);
-            pool_enqueue_waiter(pool, client); return;
+            pool_enqueue_waiter(pool, client);
+            return;
         }
-        conn->waiting_client = client; client->pending_conn = conn;
-        resume_client_after_conn(w, client, conn); return;
+        conn->waiting_client = client;
+        client->pending_conn = conn;
+        resume_client_after_conn(w, client, conn);
+        return;
     }
 
     /* COMMAND INFO [command-name ...] — forwarded to any one master node;
      * the reply is post-processed so it only reflects what this proxy
      * itself supports (see fanout_agg_command_info_all/_named). */
     if (!strcmp(subcmd, "INFO")) {
-        const char *tmp; int tmplen;
+        const char *tmp;
+        int tmplen;
         int has_args = resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &tmp, &tmplen);
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), has_args ? "CMDINFO_NAMED" : "CMDINFO_ALL");
         client->fanout_ctx = ctx;
@@ -2494,7 +3256,11 @@ void handle_command_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * itself supports (see fanout_agg_command_docs). */
     if (!strcmp(subcmd, "DOCS")) {
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "CMDDOCS");
         client->fanout_ctx = ctx;
@@ -2508,7 +3274,11 @@ void handle_command_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * itself supports (see fanout_agg_command_list). */
     if (!strcmp(subcmd, "LIST")) {
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "CMDLIST");
         client->fanout_ctx = ctx;
@@ -2522,12 +3292,23 @@ void handle_command_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * the reply is post-processed into a count of proxy-supported commands
      * (see fanout_agg_command_count). */
     if (!strcmp(subcmd, "COUNT")) {
-        const char *args[1] = {"LIST"}; int arglens[1] = {4};
-        int built_len; char *built = build_resp_cmd("COMMAND", 7, args, arglens, 1, &built_len);
-        if (!built) { client_send_error(w, client, "out of memory"); client->hbuf_len = 0; return; }
+        const char *args[1] = {"LIST"};
+        int arglens[1] = {4};
+        int built_len;
+        char *built = build_resp_cmd("COMMAND", 7, args, arglens, 1, &built_len);
+        if (!built) {
+            client_send_error(w, client, "out of memory");
+            client->hbuf_len = 0;
+            return;
+        }
 
         FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-        if (!ctx) { free(built); client_send_error(w, client, "out of memory"); close_client(w, client); return; }
+        if (!ctx) {
+            free(built);
+            client_send_error(w, client, "out of memory");
+            close_client(w, client);
+            return;
+        }
         ctx->client = client;
         snprintf(ctx->cmd, sizeof(ctx->cmd), "CMDCOUNT");
         client->fanout_ctx = ctx;
@@ -2542,32 +3323,45 @@ void handle_command_cmd(Worker *w, ClientConn *client, int cmdlen) {
      * request verbatim to any one master node and relay the reply as-is,
      * otherwise reject the client without a backend round-trip. */
     if (!strcmp(subcmd, "GETKEYS") || !strcmp(subcmd, "GETKEYSANDFLAGS")) {
-        const char *tgt; int tgtlen;
+        const char *tgt;
+        int tgtlen;
         if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &tgt, &tgtlen)) {
             client_send_error(w, client, "wrong number of arguments for 'command|getkeys' command");
-            client->hbuf_len = 0; return;
+            client->hbuf_len = 0;
+            return;
         }
-        char tgtcmd[64]; int tclen = tgtlen < 63 ? tgtlen : 63;
-        memcpy(tgtcmd, tgt, (size_t)tclen); tgtcmd[tclen] = '\0';
+        char tgtcmd[64];
+        int tclen = tgtlen < 63 ? tgtlen : 63;
+        memcpy(tgtcmd, tgt, (size_t)tclen);
+        tgtcmd[tclen] = '\0';
         for (int i = 0; tgtcmd[i]; i++) tgtcmd[i] = (char)toupper((unsigned char)tgtcmd[i]);
 
         if (!cmd_is_supported(tgtcmd)) {
             client_send_error(w, client, "Invalid command specified");
-            client->hbuf_len = 0; return;
+            client->hbuf_len = 0;
+            return;
         }
 
         int ni = topo_first_master(w);
         DbGroup *grp = db_group_get(w, client->db);
-        if (!grp) { client_send_error(w, client, "db group error"); close_client(w, client); return; }
+        if (!grp) {
+            client_send_error(w, client, "db group error");
+            close_client(w, client);
+            return;
+        }
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
         if (!conn) {
-            client->node_idx = ni; client->state = CS_WAITING_CONN;
+            client->node_idx = ni;
+            client->state = CS_WAITING_CONN;
             fd_unwatch(w, client->fd, EL_READABLE);
-            pool_enqueue_waiter(pool, client); return;
+            pool_enqueue_waiter(pool, client);
+            return;
         }
-        conn->waiting_client = client; client->pending_conn = conn;
-        resume_client_after_conn(w, client, conn); return;
+        conn->waiting_client = client;
+        client->pending_conn = conn;
+        resume_client_after_conn(w, client, conn);
+        return;
     }
 
     client_send_error(w, client, "unknown COMMAND subcommand");
@@ -2612,7 +3406,8 @@ void handle_nokey_cmd(Worker *w, ClientConn *client, const char *cmd, int cmdlen
         return;
     }
     if (!strcmp(cmd, "PING")) {
-        const char *msg; int msglen;
+        const char *msg;
+        int msglen;
         if (resp_get_nth_arg(client->hbuf, cmdlen, 1, &msg, &msglen)) {
             send_bulk_reply(w, client, msg, msglen);
             return;
@@ -2620,18 +3415,29 @@ void handle_nokey_cmd(Worker *w, ClientConn *client, const char *cmd, int cmdlen
         const char *pong = "+PONG\r\n";
         if (client->wbuf_cap < 7) {
             char *tmp = realloc(client->wbuf, 8);
-            if (!tmp) { client_send_error(w,client,"oom"); client->hbuf_len=0; return; }
-            client->wbuf = tmp; client->wbuf_cap = 8;
+            if (!tmp) {
+                client_send_error(w, client, "oom");
+                client->hbuf_len = 0;
+                return;
+            }
+            client->wbuf = tmp;
+            client->wbuf_cap = 8;
         }
-        memcpy(client->wbuf, pong, 7); client->wbuf_len=7; client->wbuf_off=0;
-        client->hbuf_len = 0; client->state = CS_WRITING_RESP;
-        fd_watch(w, client->fd, EL_WRITABLE); return;
+        memcpy(client->wbuf, pong, 7);
+        client->wbuf_len = 7;
+        client->wbuf_off = 0;
+        client->hbuf_len = 0;
+        client->state = CS_WRITING_RESP;
+        fd_watch(w, client->fd, EL_WRITABLE);
+        return;
     }
     if (!strcmp(cmd, "ECHO")) {
-        const char *msg; int msglen;
+        const char *msg;
+        int msglen;
         if (!resp_get_nth_arg(client->hbuf, cmdlen, 1, &msg, &msglen)) {
             client_send_error(w, client, "wrong number of arguments for 'echo' command");
-            client->hbuf_len = 0; return;
+            client->hbuf_len = 0;
+            return;
         }
         send_bulk_reply(w, client, msg, msglen);
         return;
@@ -2643,114 +3449,179 @@ void handle_nokey_cmd(Worker *w, ClientConn *client, const char *cmd, int cmdlen
         int sec_len = snprintf(sec, sizeof(sec), "%ld", (long)tv.tv_sec);
         int usec_len = snprintf(usec, sizeof(usec), "%ld", (long)tv.tv_usec);
         char reply[64];
-        int reply_len = snprintf(reply, sizeof(reply),
-            "*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", sec_len, sec, usec_len, usec);
+        int reply_len =
+            snprintf(reply, sizeof(reply), "*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n", sec_len, sec, usec_len, usec);
         if (client->wbuf_cap < reply_len) {
             char *tmp = realloc(client->wbuf, (size_t)reply_len);
-            if (!tmp) { client_send_error(w,client,"oom"); client->hbuf_len=0; return; }
-            client->wbuf = tmp; client->wbuf_cap = reply_len;
+            if (!tmp) {
+                client_send_error(w, client, "oom");
+                client->hbuf_len = 0;
+                return;
+            }
+            client->wbuf = tmp;
+            client->wbuf_cap = reply_len;
         }
-        memcpy(client->wbuf, reply, (size_t)reply_len); client->wbuf_len=reply_len; client->wbuf_off=0;
-        client->hbuf_len = 0; client->state = CS_WRITING_RESP;
-        fd_watch(w, client->fd, EL_WRITABLE); return;
+        memcpy(client->wbuf, reply, (size_t)reply_len);
+        client->wbuf_len = reply_len;
+        client->wbuf_off = 0;
+        client->hbuf_len = 0;
+        client->state = CS_WRITING_RESP;
+        fd_watch(w, client->fd, EL_WRITABLE);
+        return;
     }
     if (!strcmp(cmd, "SELECT")) {
-        const char *key; int kl;
+        const char *key;
+        int kl;
         int db = 0;
         if (resp_get_nth_arg(client->hbuf, cmdlen, 1, &key, &kl)) {
-            char tmp[16]; int tl = kl < 15 ? kl : 15;
-            memcpy(tmp, key, (size_t)tl); tmp[tl] = '\0';
+            char tmp[16];
+            int tl = kl < 15 ? kl : 15;
+            memcpy(tmp, key, (size_t)tl);
+            tmp[tl] = '\0';
             db = atoi(tmp);
         }
         if (db != 0) {
             const char *e = "-ERR DB index is out of range\r\n";
-            ssize_t wr = write(client->fd, e, strlen(e)); (void)wr;
-            client->hbuf_len = 0; return;
+            ssize_t wr = write(client->fd, e, strlen(e));
+            (void)wr;
+            client->hbuf_len = 0;
+            return;
         }
         const char *ok = "+OK\r\n";
         if (client->wbuf_cap < 5) {
             char *tmp = realloc(client->wbuf, 8);
-            if (!tmp) { client_send_error(w,client,"oom"); client->hbuf_len=0; return; }
-            client->wbuf = tmp; client->wbuf_cap = 8;
+            if (!tmp) {
+                client_send_error(w, client, "oom");
+                client->hbuf_len = 0;
+                return;
+            }
+            client->wbuf = tmp;
+            client->wbuf_cap = 8;
         }
-        memcpy(client->wbuf, ok, 5); client->wbuf_len=5; client->wbuf_off=0;
-        client->hbuf_len = 0; client->state = CS_WRITING_RESP;
-        fd_watch(w, client->fd, EL_WRITABLE); return;
+        memcpy(client->wbuf, ok, 5);
+        client->wbuf_len = 5;
+        client->wbuf_off = 0;
+        client->hbuf_len = 0;
+        client->state = CS_WRITING_RESP;
+        fd_watch(w, client->fd, EL_WRITABLE);
+        return;
     }
-    if (!strcmp(cmd, "RANDOMKEY") || !strcmp(cmd, "INFO") || !strcmp(cmd, "LOLWUT")
-        || !strcmp(cmd, "FT._LIST") || !strcmp(cmd, "FT.INFO")) {
+    if (!strcmp(cmd, "RANDOMKEY") || !strcmp(cmd, "INFO") || !strcmp(cmd, "LOLWUT") || !strcmp(cmd, "FT._LIST") ||
+        !strcmp(cmd, "FT.INFO")) {
         int ni = topo_first_master(w);
         DbGroup *grp = db_group_get(w, client->db);
-        if (!grp) { client_send_error(w,client,"db group error"); close_client(w,client); return; }
+        if (!grp) {
+            client_send_error(w, client, "db group error");
+            close_client(w, client);
+            return;
+        }
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
         if (!conn) {
-            client->node_idx = ni; client->state = CS_WAITING_CONN;
+            client->node_idx = ni;
+            client->state = CS_WAITING_CONN;
             fd_unwatch(w, client->fd, EL_READABLE);
-            pool_enqueue_waiter(pool, client); return;
+            pool_enqueue_waiter(pool, client);
+            return;
         }
-        conn->waiting_client = client; client->pending_conn = conn;
-        resume_client_after_conn(w, client, conn); return;
+        conn->waiting_client = client;
+        client->pending_conn = conn;
+        resume_client_after_conn(w, client, conn);
+        return;
     }
 
     int target_nodes[MAX_NODES];
     int ntargets = topo_all_masters(w, target_nodes);
 
     FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-    if (!ctx) { client_send_error(w,client,"out of memory"); close_client(w,client); return; }
+    if (!ctx) {
+        client_send_error(w, client, "out of memory");
+        close_client(w, client);
+        return;
+    }
     ctx->client = client;
     snprintf(ctx->cmd, sizeof(ctx->cmd), "%s", cmd);
-    ctx->nsubs = ntargets; ctx->ndone = 0; ctx->had_error = 0;
+    ctx->nsubs = ntargets;
+    ctx->ndone = 0;
+    ctx->had_error = 0;
     client->fanout_ctx = ctx;
 
     DbGroup *grp = db_group_get(w, client->db);
     if (!grp) {
-        fanout_ctx_free(ctx); client->fanout_ctx = NULL;
-        client_send_error(w,client,"db group error"); close_client(w,client); return;
+        fanout_ctx_free(ctx);
+        client->fanout_ctx = NULL;
+        client_send_error(w, client, "db group error");
+        close_client(w, client);
+        return;
     }
 
     for (int ti = 0; ti < ntargets; ti++) {
         int ni = target_nodes[ti];
         FanoutSub *sub = &ctx->subs[ti];
-        sub->ctx = ctx; sub->sub_idx = ti; sub->node_idx = ni;
-        sub->rbuf = NULL; sub->rbuf_len = sub->rbuf_cap = 0;
-        sub->done = 0; sub->error = 0; sub->conn = NULL;
+        sub->ctx = ctx;
+        sub->sub_idx = ti;
+        sub->node_idx = ni;
+        sub->rbuf = NULL;
+        sub->rbuf_len = sub->rbuf_cap = 0;
+        sub->done = 0;
+        sub->error = 0;
+        sub->conn = NULL;
 
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
-        if (!conn) { sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++; continue; }
+        if (!conn) {
+            sub->error = 1;
+            sub->done = 1;
+            ctx->had_error = 1;
+            ctx->ndone++;
+            continue;
+        }
 
         if (conn->wbuf_cap < cmdlen) {
             char *tmp = realloc(conn->wbuf, (size_t)cmdlen);
-            if (!tmp) { pool_release(w,conn); sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++; continue; }
-            conn->wbuf = tmp; conn->wbuf_cap = cmdlen;
+            if (!tmp) {
+                pool_release(w, conn);
+                sub->error = 1;
+                sub->done = 1;
+                ctx->had_error = 1;
+                ctx->ndone++;
+                continue;
+            }
+            conn->wbuf = tmp;
+            conn->wbuf_cap = cmdlen;
         }
         memcpy(conn->wbuf, client->hbuf, (size_t)cmdlen);
-        conn->wbuf_len = cmdlen; conn->wbuf_off = 0;
-        conn->waiting_client = NULL; conn->fanout_sub = sub; sub->conn = conn;
+        conn->wbuf_len = cmdlen;
+        conn->wbuf_off = 0;
+        conn->waiting_client = NULL;
+        conn->fanout_sub = sub;
+        sub->conn = conn;
         if (conn->fd >= 0 && conn->fd < g_config.max_connection) w->backend_map[conn->fd] = conn;
         fd_watch(w, conn->fd, EL_WRITABLE);
     }
 
-    if (ctx->ndone == ctx->nsubs)
-        fanout_aggregate_and_reply(w, ctx);
+    if (ctx->ndone == ctx->nsubs) fanout_aggregate_and_reply(w, ctx);
 }
 
 void handle_scan_cmd(Worker *w, ClientConn *client, int cmdlen) {
-    const char *cursor_str; int cursor_len;
+    const char *cursor_str;
+    int cursor_len;
     if (!resp_get_nth_arg(client->hbuf, cmdlen, 1, &cursor_str, &cursor_len)) {
-        client_send_error(w,client,"protocol error"); client->hbuf_len=0; return;
+        client_send_error(w, client, "protocol error");
+        client->hbuf_len = 0;
+        return;
     }
 
     int target_nodes[MAX_NODES];
     int ntargets = topo_all_masters(w, target_nodes);
 
-    uint64_t node_cursor[MAX_NODES]; memset(node_cursor, 0, sizeof(node_cursor));
+    uint64_t node_cursor[MAX_NODES];
+    memset(node_cursor, 0, sizeof(node_cursor));
     int is_fresh = (cursor_len == 1 && cursor_str[0] == '0');
-    if (!is_fresh)
-        scan_decode_cursor(cursor_str, cursor_len, node_cursor, ntargets);
+    if (!is_fresh) scan_decode_cursor(cursor_str, cursor_len, node_cursor, ntargets);
 
-    int active_nodes[MAX_NODES]; int nactive = 0;
+    int active_nodes[MAX_NODES];
+    int nactive = 0;
     uint64_t active_cursors[MAX_NODES];
     for (int ti = 0; ti < ntargets; ti++) {
         if (is_fresh || node_cursor[ti] != 0) {
@@ -2764,76 +3635,126 @@ void handle_scan_cmd(Worker *w, ClientConn *client, int cmdlen) {
         int rlen = (int)strlen(resp);
         if (client->wbuf_cap < rlen) {
             char *tmp = realloc(client->wbuf, (size_t)rlen + 1);
-            if (!tmp) { client_send_error(w,client,"oom"); client->hbuf_len=0; return; }
-            client->wbuf = tmp; client->wbuf_cap = rlen + 1;
+            if (!tmp) {
+                client_send_error(w, client, "oom");
+                client->hbuf_len = 0;
+                return;
+            }
+            client->wbuf = tmp;
+            client->wbuf_cap = rlen + 1;
         }
         memcpy(client->wbuf, resp, (size_t)rlen);
-        client->wbuf_len = rlen; client->wbuf_off = 0; client->hbuf_len = 0;
-        client->state = CS_WRITING_RESP; fd_watch(w, client->fd, EL_WRITABLE); return;
+        client->wbuf_len = rlen;
+        client->wbuf_off = 0;
+        client->hbuf_len = 0;
+        client->state = CS_WRITING_RESP;
+        fd_watch(w, client->fd, EL_WRITABLE);
+        return;
     }
 
     FanoutCtx *ctx = calloc(1, sizeof(FanoutCtx));
-    if (!ctx) { client_send_error(w,client,"out of memory"); close_client(w,client); return; }
+    if (!ctx) {
+        client_send_error(w, client, "out of memory");
+        close_client(w, client);
+        return;
+    }
     ctx->client = client;
     strcpy(ctx->cmd, "SCAN");
-    ctx->nsubs = nactive; ctx->ndone = 0; ctx->had_error = 0;
+    ctx->nsubs = nactive;
+    ctx->ndone = 0;
+    ctx->had_error = 0;
     ctx->scan_ntargets = ntargets;
     memcpy(ctx->scan_target_nodes, target_nodes, (size_t)ntargets * sizeof(int));
     memset(ctx->scan_node_cursors, 0, sizeof(ctx->scan_node_cursors));
-    for (int ti = 0; ti < ntargets; ti++)
-        ctx->scan_node_cursors[target_nodes[ti]] = is_fresh ? 0 : node_cursor[ti];
+    for (int ti = 0; ti < ntargets; ti++) ctx->scan_node_cursors[target_nodes[ti]] = is_fresh ? 0 : node_cursor[ti];
     client->fanout_ctx = ctx;
 
-    const char *opt_args[8]; int opt_arglens[8]; int nopt = 0;
+    const char *opt_args[8];
+    int opt_arglens[8];
+    int nopt = 0;
     for (int i = 2; nopt < 8; i++) {
-        const char *p; int pl;
+        const char *p;
+        int pl;
         if (!resp_get_nth_arg(client->hbuf, cmdlen, i, &p, &pl)) break;
-        opt_args[nopt] = p; opt_arglens[nopt] = pl; nopt++;
+        opt_args[nopt] = p;
+        opt_arglens[nopt] = pl;
+        nopt++;
     }
 
     DbGroup *grp = db_group_get(w, client->db);
     if (!grp) {
-        fanout_ctx_free(ctx); client->fanout_ctx = NULL;
-        client_send_error(w,client,"db group error"); close_client(w,client); return;
+        fanout_ctx_free(ctx);
+        client->fanout_ctx = NULL;
+        client_send_error(w, client, "db group error");
+        close_client(w, client);
+        return;
     }
 
     for (int ai = 0; ai < nactive; ai++) {
         int ni = active_nodes[ai];
         FanoutSub *sub = &ctx->subs[ai];
-        sub->ctx = ctx; sub->sub_idx = ai; sub->node_idx = ni;
-        sub->rbuf = NULL; sub->rbuf_len = sub->rbuf_cap = 0;
-        sub->done = 0; sub->error = 0; sub->conn = NULL;
+        sub->ctx = ctx;
+        sub->sub_idx = ai;
+        sub->node_idx = ni;
+        sub->rbuf = NULL;
+        sub->rbuf_len = sub->rbuf_cap = 0;
+        sub->done = 0;
+        sub->error = 0;
+        sub->conn = NULL;
 
         char curs_buf[24];
-        int  curs_len = snprintf(curs_buf, sizeof(curs_buf), "%llu",
-                                  (unsigned long long)active_cursors[ai]);
-        const char *args[9]; int arglens[9];
+        int curs_len = snprintf(curs_buf, sizeof(curs_buf), "%llu", (unsigned long long)active_cursors[ai]);
+        const char *args[9];
+        int arglens[9];
         int nargs = 0;
-        args[nargs] = curs_buf; arglens[nargs] = curs_len; nargs++;
+        args[nargs] = curs_buf;
+        arglens[nargs] = curs_len;
+        nargs++;
         for (int oi = 0; oi < nopt; oi++) {
-            args[nargs] = opt_args[oi]; arglens[nargs] = opt_arglens[oi]; nargs++;
+            args[nargs] = opt_args[oi];
+            arglens[nargs] = opt_arglens[oi];
+            nargs++;
         }
         int sub_cmdlen;
         char *sub_cmd = build_resp_cmd("SCAN", 4, args, arglens, nargs, &sub_cmdlen);
-        if (!sub_cmd) { sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++; continue; }
+        if (!sub_cmd) {
+            sub->error = 1;
+            sub->done = 1;
+            ctx->had_error = 1;
+            ctx->ndone++;
+            continue;
+        }
 
         ConnPool *pool = &grp->node_pools[ni].pools[POOL_NORMAL];
         PoolConn *conn = pool_acquire_nb(w, pool);
-        if (!conn) { free(sub_cmd); sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++; continue; }
+        if (!conn) {
+            free(sub_cmd);
+            sub->error = 1;
+            sub->done = 1;
+            ctx->had_error = 1;
+            ctx->ndone++;
+            continue;
+        }
 
-        conn->waiting_client = NULL; conn->fanout_sub = sub; sub->conn = conn;
+        conn->waiting_client = NULL;
+        conn->fanout_sub = sub;
+        sub->conn = conn;
         if (conn->fd >= 0 && conn->fd < g_config.max_connection) w->backend_map[conn->fd] = conn;
 
         if (resp3_conn_needs_upgrade(conn)) {
             /* Same reasoning as fanout_dispatch_sub() above: stash the real
              * SCAN sub-command and let handle_resp3_handshake_readable()
              * flush it once this connection has upgraded. */
-            int derr = resp3_defer_append(conn, sub_cmd, sub_cmdlen) < 0 ||
-                       resp3_start_conn_upgrade(w, conn) < 0;
+            int derr = resp3_defer_append(conn, sub_cmd, sub_cmdlen) < 0 || resp3_start_conn_upgrade(w, conn) < 0;
             free(sub_cmd);
             if (derr) {
-                conn->fanout_sub = NULL; pool_destroy_conn(w, conn); sub->conn = NULL;
-                sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++;
+                conn->fanout_sub = NULL;
+                pool_destroy_conn(w, conn);
+                sub->conn = NULL;
+                sub->error = 1;
+                sub->done = 1;
+                ctx->had_error = 1;
+                ctx->ndone++;
             }
             continue;
         }
@@ -2842,88 +3763,109 @@ void handle_scan_cmd(Worker *w, ClientConn *client, int cmdlen) {
             char *tmp = realloc(conn->wbuf, (size_t)sub_cmdlen);
             if (!tmp) {
                 free(sub_cmd);
-                conn->fanout_sub = NULL; pool_release(w,conn); sub->conn = NULL;
-                sub->error=1; sub->done=1; ctx->had_error=1; ctx->ndone++; continue;
+                conn->fanout_sub = NULL;
+                pool_release(w, conn);
+                sub->conn = NULL;
+                sub->error = 1;
+                sub->done = 1;
+                ctx->had_error = 1;
+                ctx->ndone++;
+                continue;
             }
-            conn->wbuf = tmp; conn->wbuf_cap = sub_cmdlen;
+            conn->wbuf = tmp;
+            conn->wbuf_cap = sub_cmdlen;
         }
         memcpy(conn->wbuf, sub_cmd, (size_t)sub_cmdlen);
-        conn->wbuf_len = sub_cmdlen; conn->wbuf_off = 0;
+        conn->wbuf_len = sub_cmdlen;
+        conn->wbuf_off = 0;
         free(sub_cmd);
         fd_watch(w, conn->fd, EL_WRITABLE);
     }
 
-    if (ctx->ndone == ctx->nsubs)
-        fanout_aggregate_and_reply(w, ctx);
+    if (ctx->ndone == ctx->nsubs) fanout_aggregate_and_reply(w, ctx);
 }
 
 void handle_multikey_complete(Worker *w, ClientConn *client, const char *cmd) {
-    if(cmd_is_fanout(cmd)) {
+    if (cmd_is_fanout(cmd)) {
         handle_fanout_cmd(w, client, cmd);
         return;
     }
 
-    const char *kp[256]; int kl[256];
+    const char *kp[256];
+    int kl[256];
     int nkeys = resp_extract_keys(client->pbuf, client->pbuf_len, cmd, kp, kl, 256);
-    if(nkeys < 0) {
+    if (nkeys < 0) {
         client_send_error(w, client, "protocol error");
-        client->pbuf_len=0; client->hbuf_len=0;
-        client->using_pbuf=0; client->state=CS_READING_HDR;
+        client->pbuf_len = 0;
+        client->hbuf_len = 0;
+        client->using_pbuf = 0;
+        client->state = CS_READING_HDR;
         fd_watch(w, client->fd, EL_READABLE);
         return;
     }
-    int is_keyless_script = (nkeys == 0) &&
-        (!strcmp(cmd,"EVAL") || !strcmp(cmd,"EVAL_RO") ||
-         !strcmp(cmd,"EVALSHA") || !strcmp(cmd,"EVALSHA_RO"));
-    if(nkeys == 0 && !is_keyless_script) {
+    int is_keyless_script = (nkeys == 0) && (!strcmp(cmd, "EVAL") || !strcmp(cmd, "EVAL_RO") ||
+                                             !strcmp(cmd, "EVALSHA") || !strcmp(cmd, "EVALSHA_RO"));
+    if (nkeys == 0 && !is_keyless_script) {
         client_send_error(w, client, "missing key");
-        client->pbuf_len=0; client->hbuf_len=0;
-        client->using_pbuf=0; client->state=CS_READING_HDR;
+        client->pbuf_len = 0;
+        client->hbuf_len = 0;
+        client->using_pbuf = 0;
+        client->state = CS_READING_HDR;
         fd_watch(w, client->fd, EL_READABLE);
         return;
     }
 
     int node_idx;
-    if(is_keyless_script) {
+    if (is_keyless_script) {
         /* No key to hash a slot from; route to the first master, same
          * convention as OBJECT HELP / XGROUP HELP. */
         node_idx = topo_first_master(w);
     } else {
         int slot = key_slot(kp[0], kl[0]);
-        for(int i = 1; i < nkeys; i++) {
-            if(key_slot(kp[i], kl[i]) != slot) {
+        for (int i = 1; i < nkeys; i++) {
+            if (key_slot(kp[i], kl[i]) != slot) {
                 client_send_crossslot(client);
-                client->pbuf_len=0; client->hbuf_len=0;
-                client->using_pbuf=0; client->state=CS_READING_HDR;
+                client->pbuf_len = 0;
+                client->hbuf_len = 0;
+                client->using_pbuf = 0;
+                client->state = CS_READING_HDR;
                 fd_watch(w, client->fd, EL_READABLE);
                 return;
             }
         }
 
         node_idx = w->topo.slot_map[slot];
-        if(node_idx < 0 || node_idx >= w->topo.node_count) {
+        if (node_idx < 0 || node_idx >= w->topo.node_count) {
             client_send_error(w, client, "slot not mapped");
-            client->pbuf_len=0; client->hbuf_len=0;
-            client->using_pbuf=0; client->state=CS_READING_HDR;
+            client->pbuf_len = 0;
+            client->hbuf_len = 0;
+            client->using_pbuf = 0;
+            client->state = CS_READING_HDR;
             fd_watch(w, client->fd, EL_READABLE);
             return;
         }
     }
 
     client->using_pbuf = 1;
-    client->node_idx   = node_idx;
+    client->node_idx = node_idx;
 
-    if (client->acl_authenticated) { acl_route_business_cmd(w, client, node_idx); return; }
+    if (client->acl_authenticated) {
+        acl_route_business_cmd(w, client, node_idx);
+        return;
+    }
 
     DbGroup *grp = db_group_get(w, client->db);
-    if(!grp) { client_send_error(w,client,"db group error"); close_client(w,client); return; }
+    if (!grp) {
+        client_send_error(w, client, "db group error");
+        close_client(w, client);
+        return;
+    }
     PoolType mkey_pool = POOL_NORMAL;
-    if ((!strcmp(cmd,"XREAD") || !strcmp(cmd,"XREADGROUP")) &&
-        resp_xread_has_block(client->pbuf, client->pbuf_len))
+    if ((!strcmp(cmd, "XREAD") || !strcmp(cmd, "XREADGROUP")) && resp_xread_has_block(client->pbuf, client->pbuf_len))
         mkey_pool = POOL_BLOCKING;
     ConnPool *pool = &grp->node_pools[node_idx].pools[mkey_pool];
     PoolConn *conn = pool_acquire_nb(w, pool);
-    if(!conn) {
+    if (!conn) {
         client->state = CS_WAITING_CONN;
         fd_unwatch(w, client->fd, EL_READABLE);
         pool_enqueue_waiter(pool, client);

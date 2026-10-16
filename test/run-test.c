@@ -21,12 +21,15 @@ void run_pubsub_tests(const char *host, int port, int *pass, int *fail);
 void run_acl_tests(const char *host, int port, int *pass, int *fail);
 void run_resp3_tests(const char *host, int port, int *pass, int *fail);
 void run_search_tests(const char *host, int port, int *pass, int *fail);
-int  test_acl_fixture_setup(const char *seed);
+int test_acl_fixture_setup(const char *seed);
 void test_acl_fixture_teardown(void);
 extern const char *g_test_acl_user;
 
 static void usage(const char *prog) {
-    fprintf(stderr, "Usage: %s [--bloomfilter] [--json] [--search] [--string] [--pubsub] [-h=<host>] [-p=<port>] [--cluster=<host:port>]\n", prog);
+    fprintf(stderr,
+            "Usage: %s [--bloomfilter] [--json] [--search] [--string] [--pubsub] [-h=<host>] [-p=<port>] "
+            "[--cluster=<host:port>]\n",
+            prog);
     fprintf(stderr, "  -h=<host>      proxy IP address (default: 127.0.0.1)\n");
     fprintf(stderr, "  -p=<port>      proxy port      (default: 7777)\n");
     fprintf(stderr, "  --cluster=<host:port>  a backend cluster node: creates temporary ACL users\n"
@@ -42,41 +45,41 @@ static void usage(const char *prog) {
 
 int main(int argc, char *argv[]) {
     char host[64] = "127.0.0.1";
-    int  port     = 7777;
-    int  run_bloomfilter = 0;
-    int  run_json        = 0;
-    int  run_search      = 0;
-    int  run_string      = 0;
-    int  run_pubsub      = 0;
-    int  run_defaults    = 1;
+    int port = 7777;
+    int run_bloomfilter = 0;
+    int run_json = 0;
+    int run_search = 0;
+    int run_string = 0;
+    int run_pubsub = 0;
+    int run_defaults = 1;
     char cluster_seed[128] = "";
 
     for (int i = 1; i < argc; i++) {
         if (sscanf(argv[i], "-h=%63s", host) == 1) continue;
-        if (sscanf(argv[i], "-p=%d",  &port) == 1) continue;
+        if (sscanf(argv[i], "-p=%d", &port) == 1) continue;
         if (sscanf(argv[i], "--cluster=%127s", cluster_seed) == 1) continue;
         if (strcmp(argv[i], "--bloomfilter") == 0) {
             run_bloomfilter = 1;
-            run_defaults    = 0;
+            run_defaults = 0;
             continue;
         }
         if (strcmp(argv[i], "--json") == 0) {
-            run_json     = 1;
+            run_json = 1;
             run_defaults = 0;
             continue;
         }
         if (strcmp(argv[i], "--search") == 0) {
-            run_search   = 1;
+            run_search = 1;
             run_defaults = 0;
             continue;
         }
         if (strcmp(argv[i], "--string") == 0) {
-            run_string   = 1;
+            run_string = 1;
             run_defaults = 0;
             continue;
         }
         if (strcmp(argv[i], "--pubsub") == 0) {
-            run_pubsub   = 1;
+            run_pubsub = 1;
             run_defaults = 0;
             continue;
         }
@@ -93,35 +96,36 @@ int main(int argc, char *argv[]) {
     int pass = 0, fail = 0;
     int p0, f0;
 
-#define RUN_SUITE(name, fn) do {                                        \
-        p0 = pass; f0 = fail;                                           \
-        fn(host, port, &pass, &fail);                                   \
-        printf("  Summary: Passed: %d, Failed: %d\n",                  \
-               pass - p0, fail - f0);                                   \
+#define RUN_SUITE(name, fn)                                                  \
+    do {                                                                     \
+        p0 = pass;                                                           \
+        f0 = fail;                                                           \
+        fn(host, port, &pass, &fail);                                        \
+        printf("  Summary: Passed: %d, Failed: %d\n", pass - p0, fail - f0); \
     } while (0)
 
     if (run_defaults) {
-        RUN_SUITE("bitmap",      run_bitmap_tests);
-        RUN_SUITE("hash",        run_hash_tests);
-        RUN_SUITE("string",      run_string_tests);
-        RUN_SUITE("general",     run_general_tests);
-        RUN_SUITE("script",      run_script_tests);
-        RUN_SUITE("function",    run_function_tests);
-        RUN_SUITE("geospatial",  run_geospatial_tests);
+        RUN_SUITE("bitmap", run_bitmap_tests);
+        RUN_SUITE("hash", run_hash_tests);
+        RUN_SUITE("string", run_string_tests);
+        RUN_SUITE("general", run_general_tests);
+        RUN_SUITE("script", run_script_tests);
+        RUN_SUITE("function", run_function_tests);
+        RUN_SUITE("geospatial", run_geospatial_tests);
         RUN_SUITE("hyperloglog", run_hyperloglog_tests);
-        RUN_SUITE("list",        run_list_tests);
-        RUN_SUITE("set",         run_set_tests);
-        RUN_SUITE("stream",      run_stream_tests);
-        RUN_SUITE("zset",        run_zset_tests);
-        RUN_SUITE("blocking",    run_blocking_tests);
-        RUN_SUITE("pubsub",      run_pubsub_tests);
-        RUN_SUITE("acl",         run_acl_tests);
+        RUN_SUITE("list", run_list_tests);
+        RUN_SUITE("set", run_set_tests);
+        RUN_SUITE("stream", run_stream_tests);
+        RUN_SUITE("zset", run_zset_tests);
+        RUN_SUITE("blocking", run_blocking_tests);
+        RUN_SUITE("pubsub", run_pubsub_tests);
+        RUN_SUITE("acl", run_acl_tests);
         /* Must run last: this is the one suite that actually triggers the
          * real "HELLO 3" backend probe, which flips a process-wide sticky
          * flag (g_backend_resp3_active) for the rest of the proxy's life --
          * every suite above gets to run against a proxy that has never seen
          * RESP3 at all, exactly like before this feature existed. */
-        RUN_SUITE("resp3",       run_resp3_tests);
+        RUN_SUITE("resp3", run_resp3_tests);
     }
 
     if (run_bloomfilter) {

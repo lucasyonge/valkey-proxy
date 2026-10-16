@@ -61,49 +61,43 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
     printf("\n--- HELLO negotiation ---\n");
 
     n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 1, "HELLO");
-    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14,
-          "bare HELLO: returns RESP2 *14 array", pass, fail);
-    CHECK(n > 0 && strstr(raw, "proto\r\n:2\r\n") != NULL,
-          "bare HELLO: proto field is 2", pass, fail);
+    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14, "bare HELLO: returns RESP2 *14 array", pass, fail);
+    CHECK(n > 0 && strstr(raw, "proto\r\n:2\r\n") != NULL, "bare HELLO: proto field is 2", pass, fail);
 
     n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 2, "HELLO", "2");
-    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14,
-          "HELLO 2: returns RESP2 *14 array", pass, fail);
+    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14, "HELLO 2: returns RESP2 *14 array", pass, fail);
 
     n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 2, "HELLO", "99");
-    CHECK(n > 0 && raw[0] == '-' && strstr(raw, "NOPROTO") != NULL,
-          "HELLO 99: -NOPROTO unsupported protocol version", pass, fail);
+    CHECK(n > 0 && raw[0] == '-' && strstr(raw, "NOPROTO") != NULL, "HELLO 99: -NOPROTO unsupported protocol version",
+          pass, fail);
 
     n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 2, "HELLO", "abc");
     CHECK(n > 0 && strstr(raw, "Protocol version is not an integer or out of range") != NULL,
           "HELLO abc: not-an-integer error, not NOPROTO", pass, fail);
 
     n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 2, "HELLO", "03");
-    CHECK(n > 0 && strstr(raw, "not an integer") != NULL,
-          "HELLO 03: leading zero is not an integer (matches Valkey)", pass, fail);
+    CHECK(n > 0 && strstr(raw, "not an integer") != NULL, "HELLO 03: leading zero is not an integer (matches Valkey)",
+          pass, fail);
 
     /* HELLO ... AUTH with bad credentials: the backend's own error is
      * relayed and nothing changes -- in particular a failed "HELLO 3 AUTH"
      * must not count as a successful RESP3 probe (the real probe below
      * still has to be the "first ever"). */
-    n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 5,
-                             "HELLO", "2", "AUTH", "tc-nosuchuser", "badpass");
-    CHECK(n > 0 && strncmp(raw, "-WRONGPASS", 10) == 0,
-          "HELLO 2 AUTH bad credentials: backend -WRONGPASS relayed", pass, fail);
-    n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 5,
-                             "HELLO", "3", "AUTH", "tc-nosuchuser", "badpass");
-    CHECK(n > 0 && strncmp(raw, "-WRONGPASS", 10) == 0,
-          "HELLO 3 AUTH bad credentials: backend -WRONGPASS relayed", pass, fail);
+    n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 5, "HELLO", "2", "AUTH", "tc-nosuchuser", "badpass");
+    CHECK(n > 0 && strncmp(raw, "-WRONGPASS", 10) == 0, "HELLO 2 AUTH bad credentials: backend -WRONGPASS relayed",
+          pass, fail);
+    n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 5, "HELLO", "3", "AUTH", "tc-nosuchuser", "badpass");
+    CHECK(n > 0 && strncmp(raw, "-WRONGPASS", 10) == 0, "HELLO 3 AUTH bad credentials: backend -WRONGPASS relayed",
+          pass, fail);
     n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 1, "HELLO");
-    CHECK(n > 0 && strstr(raw, "proto\r\n:2\r\n") != NULL,
-          "failed HELLO 3 AUTH: protocol unchanged (still RESP2)", pass, fail);
+    CHECK(n > 0 && strstr(raw, "proto\r\n:2\r\n") != NULL, "failed HELLO 3 AUTH: protocol unchanged (still RESP2)",
+          pass, fail);
 
     /* ── HELLO ... SETNAME: name stored locally, same as CLIENT SETNAME.
      * Only protover 2 (or a HELLO rejected before the protocol switch) is
      * used here, so none of these can trigger the RESP3 probe. */
     n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 4, "HELLO", "2", "SETNAME", "tc-hello");
-    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14,
-          "HELLO 2 SETNAME: returns RESP2 *14 array", pass, fail);
+    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14, "HELLO 2 SETNAME: returns RESP2 *14 array", pass, fail);
     proxy_cmd(fd_before, r, sizeof(r), 2, "CLIENT", "GETNAME");
     CHECK(strcmp(r, "tc-hello") == 0, "HELLO 2 SETNAME: CLIENT GETNAME returns the name", pass, fail);
 
@@ -125,8 +119,7 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
           "HELLO 2 SETNAME without a name: syntax error", pass, fail);
 
     n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 3, "HELLO", "2", "FOO");
-    CHECK(n > 0 && strstr(raw, "Syntax error in HELLO option 'FOO'") != NULL,
-          "HELLO 2 FOO: syntax error", pass, fail);
+    CHECK(n > 0 && strstr(raw, "Syntax error in HELLO option 'FOO'") != NULL, "HELLO 2 FOO: syntax error", pass, fail);
 
     n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 4, "HELLO", "99", "SETNAME", "tc-x");
     CHECK(n > 0 && strstr(raw, "NOPROTO") != NULL, "HELLO 99 SETNAME: -NOPROTO", pass, fail);
@@ -134,10 +127,9 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
     n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 4, "HELLO", "abc", "SETNAME", "tc-x");
     CHECK(n > 0 && strstr(raw, "not an integer") != NULL, "HELLO abc SETNAME: not-an-integer error", pass, fail);
 
-    n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 7,
-                             "HELLO", "2", "AUTH", "tc-nosuchuser", "badpass", "SETNAME", "tc-x");
-    CHECK(n > 0 && strncmp(raw, "-WRONGPASS", 10) == 0,
-          "HELLO 2 AUTH bad credentials SETNAME: -WRONGPASS", pass, fail);
+    n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 7, "HELLO", "2", "AUTH", "tc-nosuchuser", "badpass", "SETNAME",
+                            "tc-x");
+    CHECK(n > 0 && strncmp(raw, "-WRONGPASS", 10) == 0, "HELLO 2 AUTH bad credentials SETNAME: -WRONGPASS", pass, fail);
 
     n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 4, "HELLO", "2", "AUTH", "tc-x");
     CHECK(n > 0 && strstr(raw, "Syntax error in HELLO option 'AUTH'") != NULL,
@@ -151,10 +143,9 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
 
     /* AUTH default: like the AUTH command, never checked against the
      * backend -- applied together with SETNAME on success. */
-    n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 7,
-                             "HELLO", "2", "AUTH", "default", "anything", "SETNAME", "tc-d");
-    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14,
-          "HELLO 2 AUTH default SETNAME: returns *14", pass, fail);
+    n = resp_send_raw_reply(fd_before, raw, sizeof(raw), 7, "HELLO", "2", "AUTH", "default", "anything", "SETNAME",
+                            "tc-d");
+    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14, "HELLO 2 AUTH default SETNAME: returns *14", pass, fail);
     proxy_cmd(fd_before, r, sizeof(r), 2, "CLIENT", "GETNAME");
     CHECK(strcmp(r, "tc-d") == 0, "HELLO 2 AUTH default SETNAME: name applied", pass, fail);
     proxy_cmd(fd_before, r, sizeof(r), 2, "ACL", "WHOAMI");
@@ -170,19 +161,17 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
         wr = write(fd_before, p2, strlen(p2));
         (void)wr;
         n = read_raw_reply(fd_before, raw, sizeof(raw));
-        CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14,
-              "HELLO 2 SETNAME split across writes: returns *14", pass, fail);
+        CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14, "HELLO 2 SETNAME split across writes: returns *14", pass,
+              fail);
         proxy_cmd(fd_before, r, sizeof(r), 2, "CLIENT", "GETNAME");
-        CHECK(strcmp(r, "tc-split") == 0,
-              "HELLO 2 SETNAME split across writes: full name stored", pass, fail);
+        CHECK(strcmp(r, "tc-split") == 0, "HELLO 2 SETNAME split across writes: full name stored", pass, fail);
     }
 
     resp_send_raw_reply(fd_before, raw, sizeof(raw), 4, "HELLO", "2", "SETNAME", "");
     proxy_cmd(fd_before, r, sizeof(r), 2, "CLIENT", "GETNAME");
     CHECK(strcmp(r, "") == 0, "HELLO 2 SETNAME \"\": clears the name", pass, fail);
     proxy_cmd(fd_before, r, sizeof(r), 1, "PING");
-    CHECK(strcmp(r, "+PONG") == 0,
-          "connection still usable after a rejected HELLO", pass, fail);
+    CHECK(strcmp(r, "+PONG") == 0, "connection still usable after a rejected HELLO", pass, fail);
 
     /* ── the real probe: this is the one HELLO 3 in the whole test run that
      * actually asks the backend and flips g_backend_resp3_active ─────────
@@ -194,33 +183,32 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
      * pools; a failed re-login must keep it there (atomic HELLO). ─────── */
     if (g_test_acl_ro_user) {
         int fdr = proxy_connect(host, port);
-        n = resp_send_raw_reply(fdr, raw, sizeof(raw), 7, "HELLO", "2", "AUTH",
-                                 g_test_acl_ro_user, g_test_acl_ro_pass, "SETNAME", "tc-ro");
-        CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14,
-              "HELLO 2 AUTH read-only user SETNAME: returns *14", pass, fail);
+        n = resp_send_raw_reply(fdr, raw, sizeof(raw), 7, "HELLO", "2", "AUTH", g_test_acl_ro_user, g_test_acl_ro_pass,
+                                "SETNAME", "tc-ro");
+        CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14, "HELLO 2 AUTH read-only user SETNAME: returns *14", pass,
+              fail);
         proxy_cmd(fdr, r, sizeof(r), 2, "ACL", "WHOAMI");
         CHECK(strcmp(r, g_test_acl_ro_user) == 0, "HELLO 2 AUTH read-only user: ACL WHOAMI", pass, fail);
         proxy_cmd(fdr, r, sizeof(r), 2, "GET", "tc:resp3:k1");
         CHECK(strcmp(r, "v1") == 0, "HELLO 2 AUTH read-only user: GET allowed", pass, fail);
         proxy_cmd(fdr, r, sizeof(r), 3, "SET", "tc:resp3:k1", "denied");
-        CHECK(strncmp(r, "-NOPERM", 7) == 0,
-              "HELLO 2 AUTH read-only user: SET is -NOPERM (runs as that user)", pass, fail);
+        CHECK(strncmp(r, "-NOPERM", 7) == 0, "HELLO 2 AUTH read-only user: SET is -NOPERM (runs as that user)", pass,
+              fail);
 
-        n = resp_send_raw_reply(fdr, raw, sizeof(raw), 7, "HELLO", "2", "AUTH",
-                                 g_test_acl_user, "tc-wrong-pass", "SETNAME", "tc-other");
-        CHECK(n > 0 && strncmp(raw, "-WRONGPASS", 10) == 0,
-              "HELLO 2 AUTH other user, wrong password: -WRONGPASS", pass, fail);
+        n = resp_send_raw_reply(fdr, raw, sizeof(raw), 7, "HELLO", "2", "AUTH", g_test_acl_user, "tc-wrong-pass",
+                                "SETNAME", "tc-other");
+        CHECK(n > 0 && strncmp(raw, "-WRONGPASS", 10) == 0, "HELLO 2 AUTH other user, wrong password: -WRONGPASS", pass,
+              fail);
         proxy_cmd(fdr, r, sizeof(r), 2, "ACL", "WHOAMI");
         CHECK(strcmp(r, g_test_acl_ro_user) == 0, "failed HELLO AUTH: read-only user kept", pass, fail);
         proxy_cmd(fdr, r, sizeof(r), 3, "SET", "tc:resp3:k1", "denied");
-        CHECK(strncmp(r, "-NOPERM", 7) == 0,
-              "failed HELLO AUTH: still on the read-only user's connections", pass, fail);
+        CHECK(strncmp(r, "-NOPERM", 7) == 0, "failed HELLO AUTH: still on the read-only user's connections", pass,
+              fail);
         proxy_cmd(fdr, r, sizeof(r), 2, "CLIENT", "GETNAME");
         CHECK(strcmp(r, "tc-ro") == 0, "failed HELLO AUTH: name unchanged", pass, fail);
 
         /* Switching user in place: the old user's pinned conns are replaced. */
-        n = resp_send_raw_reply(fdr, raw, sizeof(raw), 5, "HELLO", "2", "AUTH",
-                                 g_test_acl_user, g_test_acl_pass);
+        n = resp_send_raw_reply(fdr, raw, sizeof(raw), 5, "HELLO", "2", "AUTH", g_test_acl_user, g_test_acl_pass);
         CHECK(n > 0 && raw[0] == '*', "HELLO 2 AUTH full user while logged in as read-only: *14", pass, fail);
         proxy_cmd(fdr, r, sizeof(r), 3, "SET", "tc:resp3:k1", "v1");
         CHECK(strcmp(r, "+OK") == 0, "after switching to the full user: SET allowed", pass, fail);
@@ -235,21 +223,19 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
      * login's own "HELLO 3 AUTH ..." doubles as the process-wide probe. */
     if (g_test_acl_user) {
         int fdp = proxy_connect(host, port);
-        n = resp_send_raw_reply(fdp, raw, sizeof(raw), 5, "HELLO", "3", "AUTH",
-                                 g_test_acl_user, g_test_acl_pass);
+        n = resp_send_raw_reply(fdp, raw, sizeof(raw), 5, "HELLO", "3", "AUTH", g_test_acl_user, g_test_acl_pass);
         CHECK(n > 0 && raw[0] == '%' && atoi(raw + 1) == 7 && strstr(raw, "proto\r\n:3\r\n") != NULL,
               "HELLO 3 AUTH as the first HELLO 3: login + RESP3 in one step, %7 map", pass, fail);
         n = resp_send_raw_reply(fdp, raw, sizeof(raw), 2, "HGETALL", "tc:resp3:nosuchhash");
-        CHECK(n > 0 && strncmp(raw, "%0", 2) == 0,
-              "HELLO 3 AUTH: replies on the ACL connection are native RESP3", pass, fail);
+        CHECK(n > 0 && strncmp(raw, "%0", 2) == 0, "HELLO 3 AUTH: replies on the ACL connection are native RESP3", pass,
+              fail);
         close(fdp);
     }
     int fd3 = proxy_connect(host, port);
     n = resp_send_raw_reply(fd3, raw, sizeof(raw), 2, "HELLO", "3");
-    CHECK(n > 0 && raw[0] == '%' && atoi(raw + 1) == 7,
-          "HELLO 3 (first plain HELLO 3): returns RESP3 %7 map", pass, fail);
-    CHECK(n > 0 && strstr(raw, "proto\r\n:3\r\n") != NULL,
-          "HELLO 3: proto field is 3", pass, fail);
+    CHECK(n > 0 && raw[0] == '%' && atoi(raw + 1) == 7, "HELLO 3 (first plain HELLO 3): returns RESP3 %7 map", pass,
+          fail);
+    CHECK(n > 0 && strstr(raw, "proto\r\n:3\r\n") != NULL, "HELLO 3: proto field is 3", pass, fail);
 
     /* A second client asking for HELLO 3 *after* the flag is already active
      * doesn't need to probe again -- still answered correctly. */
@@ -261,8 +247,7 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(strcmp(r, "+PONG") == 0, "HELLO-3 connection: PING still works", pass, fail);
 
     n = resp_send_raw_reply(fd3b, raw, sizeof(raw), 4, "HELLO", "3", "SETNAME", "tc-hello3");
-    CHECK(n > 0 && raw[0] == '%' && atoi(raw + 1) == 7,
-          "HELLO 3 SETNAME: returns RESP3 %7 map", pass, fail);
+    CHECK(n > 0 && raw[0] == '%' && atoi(raw + 1) == 7, "HELLO 3 SETNAME: returns RESP3 %7 map", pass, fail);
     proxy_cmd(fd3b, r, sizeof(r), 2, "CLIENT", "GETNAME");
     CHECK(strcmp(r, "tc-hello3") == 0, "HELLO 3 SETNAME: CLIENT GETNAME returns the name", pass, fail);
     close(fd3b);
@@ -273,10 +258,10 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
     const char *acl_pass = g_test_acl_pass;
     if (acl_user) {
         int fda = proxy_connect(host, port);
-        n = resp_send_raw_reply(fda, raw, sizeof(raw), 7,
-                                 "HELLO", "3", "AUTH", acl_user, acl_pass, "SETNAME", "tc-acl");
-        CHECK(n > 0 && raw[0] == '%' && atoi(raw + 1) == 7,
-              "HELLO 3 AUTH user pass SETNAME: returns RESP3 %7 map", pass, fail);
+        n = resp_send_raw_reply(fda, raw, sizeof(raw), 7, "HELLO", "3", "AUTH", acl_user, acl_pass, "SETNAME",
+                                "tc-acl");
+        CHECK(n > 0 && raw[0] == '%' && atoi(raw + 1) == 7, "HELLO 3 AUTH user pass SETNAME: returns RESP3 %7 map",
+              pass, fail);
         proxy_cmd(fda, r, sizeof(r), 2, "ACL", "WHOAMI");
         CHECK(strcmp(r, acl_user) == 0, "HELLO 3 AUTH: ACL WHOAMI reports the new user", pass, fail);
         n = resp_send_raw_reply(fda, raw, sizeof(raw), 2, "CLIENT", "INFO");
@@ -284,7 +269,7 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
             char want[128];
             snprintf(want, sizeof(want), "user=%s ", acl_user);
             CHECK(n > 0 && strstr(raw, want) != NULL && strstr(raw, "name=tc-acl ") != NULL &&
-                  strstr(raw, "resp=3") != NULL,
+                      strstr(raw, "resp=3") != NULL,
                   "HELLO 3 AUTH: CLIENT INFO shows user, name and resp=3", pass, fail);
         }
         proxy_cmd(fda, r, sizeof(r), 3, "SET", "tc:resp3:acl", "v-acl");
@@ -294,10 +279,10 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
 
         /* Atomicity: a failed re-login keeps the current identity, name
          * and protocol -- unlike a failed AUTH command. */
-        n = resp_send_raw_reply(fda, raw, sizeof(raw), 7,
-                                 "HELLO", "2", "AUTH", acl_user, "tc-wrong-pass", "SETNAME", "tc-other");
-        CHECK(n > 0 && strncmp(raw, "-WRONGPASS", 10) == 0,
-              "HELLO 2 AUTH wrong password while logged in: -WRONGPASS", pass, fail);
+        n = resp_send_raw_reply(fda, raw, sizeof(raw), 7, "HELLO", "2", "AUTH", acl_user, "tc-wrong-pass", "SETNAME",
+                                "tc-other");
+        CHECK(n > 0 && strncmp(raw, "-WRONGPASS", 10) == 0, "HELLO 2 AUTH wrong password while logged in: -WRONGPASS",
+              pass, fail);
         proxy_cmd(fda, r, sizeof(r), 2, "ACL", "WHOAMI");
         CHECK(strcmp(r, acl_user) == 0, "failed HELLO AUTH: previous user kept", pass, fail);
         proxy_cmd(fda, r, sizeof(r), 2, "CLIENT", "GETNAME");
@@ -306,8 +291,7 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
         CHECK(strcmp(r, "v-acl") == 0, "failed HELLO AUTH: ACL connection still usable", pass, fail);
 
         n = resp_send_raw_reply(fda, raw, sizeof(raw), 5, "HELLO", "2", "AUTH", "default", "x");
-        CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14,
-              "HELLO 2 AUTH default: back to RESP2 *14", pass, fail);
+        CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 14, "HELLO 2 AUTH default: back to RESP2 *14", pass, fail);
         proxy_cmd(fda, r, sizeof(r), 2, "ACL", "WHOAMI");
         CHECK(strcmp(r, "default") == 0, "HELLO 2 AUTH default: identity back to default", pass, fail);
         proxy_cmd(fda, r, sizeof(r), 2, "DEL", "tc:resp3:acl");
@@ -321,44 +305,36 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
     printf("\n--- RESP3 client: native passthrough ---\n");
 
     n = resp_send_raw_reply(fd3, raw, sizeof(raw), 2, "GET", "tc:resp3:nosuchkey");
-    CHECK(n > 0 && strcmp(raw, "_\r\n") == 0,
-          "RESP3 GET missing key: native null (_)", pass, fail);
+    CHECK(n > 0 && strcmp(raw, "_\r\n") == 0, "RESP3 GET missing key: native null (_)", pass, fail);
 
     resp_send_raw_reply(fd3, raw, sizeof(raw), 4, "HSET", "tc:resp3:hash", "f1", "v1");
     n = resp_send_raw_reply(fd3, raw, sizeof(raw), 2, "HGETALL", "tc:resp3:hash");
-    CHECK(n > 0 && raw[0] == '%' && atoi(raw + 1) == 1,
-          "RESP3 HGETALL: native map (%1)", pass, fail);
+    CHECK(n > 0 && raw[0] == '%' && atoi(raw + 1) == 1, "RESP3 HGETALL: native map (%1)", pass, fail);
 
     resp_send_raw_reply(fd3, raw, sizeof(raw), 3, "SADD", "tc:resp3:set", "a");
     n = resp_send_raw_reply(fd3, raw, sizeof(raw), 2, "SMEMBERS", "tc:resp3:set");
-    CHECK(n > 0 && raw[0] == '~' && atoi(raw + 1) == 1,
-          "RESP3 SMEMBERS: native set (~1)", pass, fail);
+    CHECK(n > 0 && raw[0] == '~' && atoi(raw + 1) == 1, "RESP3 SMEMBERS: native set (~1)", pass, fail);
 
     resp_send_raw_reply(fd3, raw, sizeof(raw), 4, "ZADD", "tc:resp3:zset", "1", "a");
     resp_send_raw_reply(fd3, raw, sizeof(raw), 4, "ZADD", "tc:resp3:zset", "2", "b");
     n = resp_send_raw_reply(fd3, raw, sizeof(raw), 3, "ZSCORE", "tc:resp3:zset", "a");
-    CHECK(n > 0 && raw[0] == ',',
-          "RESP3 ZSCORE: native double (,)", pass, fail);
+    CHECK(n > 0 && raw[0] == ',', "RESP3 ZSCORE: native double (,)", pass, fail);
 
-    n = resp_send_raw_reply(fd3, raw, sizeof(raw), 5,
-                             "ZRANGE", "tc:resp3:zset", "0", "-1", "WITHSCORES");
+    n = resp_send_raw_reply(fd3, raw, sizeof(raw), 5, "ZRANGE", "tc:resp3:zset", "0", "-1", "WITHSCORES");
     CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 2,
           "RESP3 ZRANGE WITHSCORES: NOT flattened -- stays nested *2 [member,score]", pass, fail);
     CHECK(n > 0 && strstr(raw, "*2\r\n$1\r\na\r\n,1\r\n") != NULL,
           "RESP3 ZRANGE WITHSCORES: first pair is a nested *2 with a native double", pass, fail);
 
     resp_send_raw_reply(fd3, raw, sizeof(raw), 5, "XADD", "tc:resp3:stream", "*", "f1", "v1");
-    n = resp_send_raw_reply(fd3, raw, sizeof(raw), 4,
-                             "XREAD", "STREAMS", "tc:resp3:stream", "0");
-    CHECK(n > 0 && raw[0] == '%' && atoi(raw + 1) == 1,
-          "RESP3 XREAD: NOT re-nested -- stays native map (%1)", pass, fail);
+    n = resp_send_raw_reply(fd3, raw, sizeof(raw), 4, "XREAD", "STREAMS", "tc:resp3:stream", "0");
+    CHECK(n > 0 && raw[0] == '%' && atoi(raw + 1) == 1, "RESP3 XREAD: NOT re-nested -- stays native map (%1)", pass,
+          fail);
 
-    resp_send_raw_reply(fd3, raw, sizeof(raw), 5,
-                         "GEOADD", "tc:resp3:geo", "13.36", "38.11", "Palermo");
-    n = resp_send_raw_reply(fd3, raw, sizeof(raw), 4,
-                             "GEOPOS", "tc:resp3:geo", "Palermo", "NoSuchPlace");
-    CHECK(n > 0 && strstr(raw, "_\r\n") != NULL,
-          "RESP3 GEOPOS: missing member's slot is native null (_), not *-1", pass, fail);
+    resp_send_raw_reply(fd3, raw, sizeof(raw), 5, "GEOADD", "tc:resp3:geo", "13.36", "38.11", "Palermo");
+    n = resp_send_raw_reply(fd3, raw, sizeof(raw), 4, "GEOPOS", "tc:resp3:geo", "Palermo", "NoSuchPlace");
+    CHECK(n > 0 && strstr(raw, "_\r\n") != NULL, "RESP3 GEOPOS: missing member's slot is native null (_), not *-1",
+          pass, fail);
 
     /* ── the headline requirement: a brand-new RESP2 connection, opened
      * *after* the global flag flipped and that has never itself said
@@ -367,62 +343,53 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
     int fd2 = proxy_connect(host, port);
 
     n = resp_send_raw_reply(fd2, raw, sizeof(raw), 2, "GET", "tc:resp3:nosuchkey");
-    CHECK(n > 0 && strcmp(raw, "$-1\r\n") == 0,
-          "RESP2 GET missing key: nil bulk ($-1), not native null", pass, fail);
+    CHECK(n > 0 && strcmp(raw, "$-1\r\n") == 0, "RESP2 GET missing key: nil bulk ($-1), not native null", pass, fail);
 
     n = resp_send_raw_reply(fd2, raw, sizeof(raw), 2, "HGETALL", "tc:resp3:hash");
-    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 2,
-          "RESP2 HGETALL: downgraded to flat *2 array, not a map", pass, fail);
+    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 2, "RESP2 HGETALL: downgraded to flat *2 array, not a map", pass,
+          fail);
 
     n = resp_send_raw_reply(fd2, raw, sizeof(raw), 2, "SMEMBERS", "tc:resp3:set");
-    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 1,
-          "RESP2 SMEMBERS: downgraded to flat *1 array, not a set", pass, fail);
+    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 1, "RESP2 SMEMBERS: downgraded to flat *1 array, not a set", pass,
+          fail);
 
     n = resp_send_raw_reply(fd2, raw, sizeof(raw), 3, "ZSCORE", "tc:resp3:zset", "a");
-    CHECK(n > 0 && strcmp(raw, "$1\r\n1\r\n") == 0,
-          "RESP2 ZSCORE: downgraded to bulk string, not a double", pass, fail);
+    CHECK(n > 0 && strcmp(raw, "$1\r\n1\r\n") == 0, "RESP2 ZSCORE: downgraded to bulk string, not a double", pass,
+          fail);
 
-    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 5,
-                             "ZRANGE", "tc:resp3:zset", "0", "-1", "WITHSCORES");
+    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 5, "ZRANGE", "tc:resp3:zset", "0", "-1", "WITHSCORES");
     CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 4,
           "RESP2 ZRANGE WITHSCORES: flattened to *4 (2 member+score pairs)", pass, fail);
     CHECK(n > 0 && strstr(raw, "*4\r\n$1\r\na\r\n$1\r\n1\r\n$1\r\nb\r\n$1\r\n2\r\n") != NULL,
           "RESP2 ZRANGE WITHSCORES: exact flat byte layout", pass, fail);
 
     resp_send_raw_reply(fd2, raw, sizeof(raw), 4, "HSET", "tc:resp3:hrand", "f1", "v1");
-    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 4,
-                             "HRANDFIELD", "tc:resp3:hrand", "1", "WITHVALUES");
+    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 4, "HRANDFIELD", "tc:resp3:hrand", "1", "WITHVALUES");
     CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 2,
           "RESP2 HRANDFIELD WITHVALUES: flattened to *2, not nested pairs", pass, fail);
 
-    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 4,
-                             "XREAD", "STREAMS", "tc:resp3:stream", "0");
+    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 4, "XREAD", "STREAMS", "tc:resp3:stream", "0");
     CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 1,
           "RESP2 XREAD: re-nested to *1 array-of-pairs, not a flattened map", pass, fail);
     CHECK(n > 0 && strstr(raw, "*1\r\n*2\r\n$15\r\n") != NULL,
           "RESP2 XREAD: outer element is a nested *2 [stream, entries] pair", pass, fail);
 
-    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 4,
-                             "GEOPOS", "tc:resp3:geo", "Palermo", "NoSuchPlace");
+    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 4, "GEOPOS", "tc:resp3:geo", "Palermo", "NoSuchPlace");
     CHECK(n > 0 && strstr(raw, "*2\r\n") != NULL && strstr(raw, "*-1\r\n") != NULL,
           "RESP2 GEOPOS: missing member's slot is a nil array (*-1), not nil bulk", pass, fail);
 
     n = resp_send_raw_reply(fd2, raw, sizeof(raw), 3, "BLPOP", "tc:resp3:nolist", "0.1");
-    CHECK(n > 0 && strcmp(raw, "*-1\r\n") == 0,
-          "RESP2 BLPOP timeout: nil array (*-1)", pass, fail);
+    CHECK(n > 0 && strcmp(raw, "*-1\r\n") == 0, "RESP2 BLPOP timeout: nil array (*-1)", pass, fail);
 
-    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 4,
-                             "LMPOP", "1", "tc:resp3:nolist", "LEFT");
-    CHECK(n > 0 && strcmp(raw, "*-1\r\n") == 0,
-          "RESP2 LMPOP on empty key: nil array (*-1)", pass, fail);
+    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 4, "LMPOP", "1", "tc:resp3:nolist", "LEFT");
+    CHECK(n > 0 && strcmp(raw, "*-1\r\n") == 0, "RESP2 LMPOP on empty key: nil array (*-1)", pass, fail);
 
     /* cross-slot fan-out (MGET) must still return a plain RESP2 array */
     resp_send_raw_reply(fd2, raw, sizeof(raw), 3, "SET", "tc:resp3:m1", "v1");
     resp_send_raw_reply(fd2, raw, sizeof(raw), 3, "SET", "tc:resp3:m2", "v2");
-    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 4,
-                             "MGET", "tc:resp3:m1", "tc:resp3:m2", "tc:resp3:nosuchkey");
-    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 3,
-          "RESP2 cross-slot MGET (fan-out): still a plain *3 array", pass, fail);
+    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 4, "MGET", "tc:resp3:m1", "tc:resp3:m2", "tc:resp3:nosuchkey");
+    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) == 3, "RESP2 cross-slot MGET (fan-out): still a plain *3 array", pass,
+          fail);
     CHECK(n > 0 && strstr(raw, "$-1\r\n") != NULL,
           "RESP2 cross-slot MGET: missing key is nil bulk within the aggregated reply", pass, fail);
 
@@ -432,14 +399,12 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
 
     int sub2 = proxy_connect(host, port);
     n = resp_send_raw_reply(sub2, raw, sizeof(raw), 2, "SUBSCRIBE", "tc:resp3:chan");
-    CHECK(n > 0 && raw[0] == '*',
-          "RESP2 subscriber: SUBSCRIBE confirmation is a plain array", pass, fail);
+    CHECK(n > 0 && raw[0] == '*', "RESP2 subscriber: SUBSCRIBE confirmation is a plain array", pass, fail);
 
     int sub3 = proxy_connect(host, port);
     resp_send_raw_reply(sub3, raw, sizeof(raw), 2, "HELLO", "3");
     n = resp_send_raw_reply(sub3, raw, sizeof(raw), 2, "SUBSCRIBE", "tc:resp3:chan");
-    CHECK(n > 0 && raw[0] == '>',
-          "RESP3 subscriber: SUBSCRIBE confirmation is push type (>)", pass, fail);
+    CHECK(n > 0 && raw[0] == '>', "RESP3 subscriber: SUBSCRIBE confirmation is push type (>)", pass, fail);
 
     int pub = proxy_connect(host, port);
     proxy_cmd(pub, r, sizeof(r), 3, "PUBLISH", "tc:resp3:chan", "hello-resp3");
