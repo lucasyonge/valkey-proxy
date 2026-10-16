@@ -13,7 +13,7 @@
 
 The list below covers every supported command.
 
-## 2. Supported command list (Update it later)
+## 2. Supported command list 
 
 ### 2.1 Bitmap
 
