@@ -269,6 +269,70 @@ The list below covers every supported command.
 | `XREVRANGE` | |
 | `XTRIM` | |
 
+### 2.12 String
+
+| Command | Notes |
+|---|---|
+| `APPEND` | |
+| `DECR` | |
+| `DECRBY` | |
+| `DELEX` | Planned |
+| `DELIFEQ` | |
+| `GET` | |
+| `GETDEL` | |
+| `GETEX` | |
+| `GETRANGE` | |
+| `GETSET` | |
+| `INCR` | |
+| `INCRBY` | |
+| `INCRBYFLOAT` | |
+| `LCS` | Fanned out per key to each owning node |
+| `MGET` | Fanned out per key to each owning node |
+| `MSET` | Fanned out per key to each owning node |
+| `MSETEX` | Fanned out per key to each owning node |
+| `MSETNX` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `PSETEX` | |
+| `SET` | |
+| `SETEX` | |
+| `SETNX` | |
+| `SETRANGE` | |
+| `STRLEN` | |
+| `SUBSTR` | |
+
+### 2.13 Transaction
+
+| Command | Notes |
+|---|---|
+| `DISCARD` | Planned |
+| `EXEC` | Planned |
+| `MULTI` | Planned |
+| `UNWATCH` | Planned |
+| `WATCH` | Planned |
+
+### 2.14 Scripting and Functions
+
+| Command | Notes |
+|---|---|
+| `EVAL` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `EVALSHA` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `EVALSHA_RO` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `EVAL_RO` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `FCALL` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `FCALL_RO` | Every key must hash to the same slot, otherwise the proxy returns `-CROSSSLOT` without contacting a backend |
+| `FUNCTION DELETE` | Broadcast to every primary node; succeeds only if every node succeeds |
+| `FUNCTION FLUSH` | Broadcast to every primary node; the `ASYNC`/`SYNC` argument is ignored (always `ASYNC`), always replies `+OK` |
+| `FUNCTION HELP` | Answered by proxy |
+| `FUNCTION KILL` | Broadcast to every primary node; succeeds if any node succeeds |
+| `FUNCTION LIST` |  |
+| `FUNCTION LOAD` | Broadcast to every primary node; succeeds only if every node succeeds |
+| `FUNCTION STATS` | Broadcast to every primary node; each node's execution state is reported separately |
+| `SCRIPT EXISTS` | Forwarded to one primary node |
+| `SCRIPT FLUSH` | Broadcast to every primary node; the `ASYNC`/`SYNC` argument is ignored (always `ASYNC`), always replies `+OK` |
+| `SCRIPT HELP` | Answered by proxy |
+| `SCRIPT KILL` | Broadcast to every primary node; succeeds if any node succeeds |
+| `SCRIPT LOAD` | Broadcast to every primary node so any shard can run the script; only one sha1 is relayed back |
+| `SCRIPT SHOW` | Forwarded to one primary node |
+
 ## 3. Fan-out command details
 
 These commands are split per key into several sub-commands sent to each key's owning node, then
@@ -426,3 +490,6 @@ directly affect command behavior are listed here:
 | `PFDEBUG` | |
 | `PFSELFTEST` | |
 | `XSETID` | |
+| `FUNCTION DUMP` | |
+| `FUNCTION RESTORE` | |
+| `SCRIPT DEBUG` | |
