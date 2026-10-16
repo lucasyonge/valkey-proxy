@@ -370,6 +370,65 @@ The list below covers every supported command.
 | `SLOWLOG RESET` | Broadcast to every primary node |
 | `TIME` | Answered by proxy |
 
+### 2.16 Bloom Filter
+
+These commands require the Bloom Filter module (valkey-bloom) to be loaded on every backend node; otherwise the backend's "unknown command" error is relayed to the client.
+
+| Command | Notes |
+|---|---|
+| `BF.ADD` | |
+| `BF.CARD` | |
+| `BF.EXISTS` | |
+| `BF.INFO` | |
+| `BF.INSERT` | |
+| `BF.MADD` | |
+| `BF.MEXISTS` | |
+| `BF.RESERVE` | |
+
+### 2.17 JSON
+
+These commands require the JSON module (valkey-json) to be loaded on every backend node; otherwise the backend's "unknown command" error is relayed to the client.
+
+| Command | Notes |
+|---|---|
+| `JSON.ARRAPPEND` | |
+| `JSON.ARRINDEX` | |
+| `JSON.ARRINSERT` | |
+| `JSON.ARRLEN` | |
+| `JSON.ARRPOP` | |
+| `JSON.ARRTRIM` | |
+| `JSON.CLEAR` | |
+| `JSON.DEL` | |
+| `JSON.FORGET` | |
+| `JSON.GET` | |
+| `JSON.MGET` | Fanned out per key to each owning node |
+| `JSON.MSET` | Fanned out per key to each owning node |
+| `JSON.NUMINCRBY` | |
+| `JSON.NUMMULTBY` | |
+| `JSON.OBJKEYS` | |
+| `JSON.OBJLEN` | |
+| `JSON.RESP` | |
+| `JSON.SET` | |
+| `JSON.STRAPPEND` | |
+| `JSON.STRLEN` | |
+| `JSON.TOGGLE` | |
+| `JSON.TYPE` | |
+
+### 2.18 Search
+
+These commands require the Search module (valkey-search) to be loaded on every backend node; otherwise the backend's "unknown command" error is relayed to the client.
+
+| Command | Notes |
+|---|---|
+| `FT.AGGREGATE` | Planned |
+| `FT.CREATE` | Broadcast to every primary node |
+| `FT.CURSOR` | Planned |
+| `FT.DROPINDEX` | Broadcast to every primary node |
+| `FT.HYBRID` | Planned |
+| `FT.INFO` | Forwarded to one primary node |
+| `FT.SEARCH` | Broadcast to every primary node |
+| `FT._LIST` | Forwarded to one primary node |
+
 ## 3. Fan-out command details
 
 These commands are split per key into several sub-commands sent to each key's owning node, then
@@ -571,3 +630,5 @@ directly affect command behavior are listed here:
 | `SLAVEOF` | |
 | `SWAPDB` | |
 | `SYNC` | |
+| `BF.LOAD` | |
+| `JSON.DEBUG` | |
