@@ -333,6 +333,43 @@ The list below covers every supported command.
 | `SCRIPT LOAD` | Broadcast to every primary node so any shard can run the script; only one sha1 is relayed back |
 | `SCRIPT SHOW` | Forwarded to one primary node |
 
+### 2.15 Server Management
+
+| Command | Notes |
+|---|---|
+| `ACL CAT` | Planned |
+| `ACL DRYRUN` | Forwarded to one primary node |
+| `ACL GETUSER` | Forwarded to one primary node |
+| `ACL HELP` | Answered by proxy |
+| `ACL LIST` | Forwarded to one primary node |
+| `ACL USERS` | Forwarded to one primary node |
+| `ACL WHOAMI` | Forwarded to one primary node |
+| `COMMAND` | |
+| `COMMAND COUNT` | Counts only the commands this proxy supports |
+| `COMMAND DOCS` | Forwarded to one primary node; reply filtered to only the commands this proxy supports |
+| `COMMAND GETKEYS` | Forwarded to one primary node |
+| `COMMAND GETKEYSANDFLAGS` | Forwarded to one primary node |
+| `COMMAND HELP` | Forwarded to one primary node |
+| `COMMAND INFO` | Forwarded to one primary node; reply filtered to only the commands this proxy supports |
+| `COMMAND LIST` | Forwarded to one primary node; reply filtered to only the commands this proxy supports |
+| `COMMANDLOG GET` | Broadcast to every primary node |
+| `COMMANDLOG HELP` | Forwarded to one primary node |
+| `COMMANDLOG LEN` | Broadcast to every primary node |
+| `COMMANDLOG RESET` | Broadcast to every primary node |
+| `DBSIZE` | Broadcast to every primary node |
+| `FLUSHALL` | Broadcast to every primary node |
+| `FLUSHDB` | Broadcast to every primary node |
+| `INFO` | Planned |
+| `LOLWUT` | Forwarded to one primary node |
+| `MEMORY USAGE` | |
+| `MODULE LIST` | Forwarded to one primary node |
+| `MONITOR` | Planned |
+| `SLOWLOG GET` | Broadcast to every primary node |
+| `SLOWLOG HELP` | Forwarded to one primary node |
+| `SLOWLOG LEN` | Broadcast to every primary node |
+| `SLOWLOG RESET` | Broadcast to every primary node |
+| `TIME` | Answered by proxy |
+
 ## 3. Fan-out command details
 
 These commands are split per key into several sub-commands sent to each key's owning node, then
@@ -493,3 +530,44 @@ directly affect command behavior are listed here:
 | `FUNCTION DUMP` | |
 | `FUNCTION RESTORE` | |
 | `SCRIPT DEBUG` | |
+| `ACL DELUSER` | |
+| `ACL GENPASS` | |
+| `ACL LOAD` | |
+| `ACL LOG` | |
+| `ACL SAVE` | |
+| `ACL SETUSER` | |
+| `BGREWRITEAOF` | |
+| `BGSAVE` | |
+| `CONFIG GET` | |
+| `CONFIG HELP` | |
+| `CONFIG RESETSTAT` | |
+| `CONFIG REWRITE` | |
+| `CONFIG SET` | |
+| `FAILOVER` | |
+| `LASTSAVE` | |
+| `LATENCY DOCTOR` | |
+| `LATENCY GRAPH` | |
+| `LATENCY HELP` | |
+| `LATENCY HISTOGRAM` | |
+| `LATENCY HISTORY` | |
+| `LATENCY LATEST` | |
+| `LATENCY RESET` | |
+| `MEMORY DOCTOR` | |
+| `MEMORY HELP` | |
+| `MEMORY MALLOC-STATS` | |
+| `MEMORY PURGE` | |
+| `MEMORY STATS` | |
+| `MODULE HELP` | |
+| `MODULE LOAD` | |
+| `MODULE LOADEX` | |
+| `MODULE UNLOAD` | |
+| `PSYNC` | |
+| `REPLCONF` | |
+| `REPLICAOF` | |
+| `RESTORE-ASKING` | |
+| `ROLE` | |
+| `SAVE` | |
+| `SHUTDOWN` | |
+| `SLAVEOF` | |
+| `SWAPDB` | |
+| `SYNC` | |
