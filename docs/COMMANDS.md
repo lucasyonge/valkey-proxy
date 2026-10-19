@@ -262,7 +262,7 @@ The list below covers every supported command.
 | `APPEND` | |
 | `DECR` | |
 | `DECRBY` | |
-| `DELEX` | Planned |
+| `DELEX` | |
 | `DELIFEQ` | |
 | `GET` | |
 | `GETDEL` | |
