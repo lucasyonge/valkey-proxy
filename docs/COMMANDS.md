@@ -157,11 +157,11 @@ The list below covers every supported command.
 | `PUBSUB HELP` | |
 | `PUBSUB NUMPAT` | Broadcast to every primary node |
 | `PUBSUB NUMSUB` | Broadcast to every primary node |
-| `PUBSUB SHARDCHANNELS` | Broadcast to every primary node; Plan not to support later |
-| `PUBSUB SHARDNUMSUB` | Broadcast to every primary node; Plan not to support later |
+| `PUBSUB SHARDCHANNELS` | Broadcast to every primary node |
+| `PUBSUB SHARDNUMSUB` | Broadcast to every primary node |
 | `PUNSUBSCRIBE` | |
-| `SPUBLISH` | Plan not to support later |
-| `SSUBSCRIBE` | Plan not to support later |
+| `SPUBLISH` | |
+| `SSUBSCRIBE` | |
 | `SUBSCRIBE` | |
 | `SUNSUBSCRIBE` | |
 | `UNSUBSCRIBE` | |
