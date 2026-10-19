@@ -164,13 +164,10 @@ void run_stream_tests(const char *host, int port, int *pass, int *fail) {
     resp_next_str(fd, r, sizeof(r));
     CHECK(r[0] == '-' && strstr(r, "CROSSSLOT") != NULL, "XREAD different slots: returns CROSSSLOT error", pass, fail);
 
-    /* ── XSETID ───────────────────────────────────────────────────────── */
+    /* ── XSETID (unsupported — rejected locally by the proxy) ──────────── */
     proxy_cmd(fd, r, sizeof(r), 3, "XSETID", "tc:st:s1", "9999999999999-0");
-    CHECK(strcmp(r, "+OK") == 0, "XSETID: sets last ID, returns OK", pass, fail);
-
-    /* auto-generated ID after XSETID must exceed 9999999999999-0 */
-    proxy_cmd(fd, r, sizeof(r), 7, "XADD", "tc:st:s1", "*", "after", "setid", "x", "1");
-    CHECK(r[0] != '-', "XADD after XSETID: entry added with higher ID", pass, fail);
+    CHECK(r[0] == '-' && strstr(r, "unsupport command") != NULL, "XSETID: unsupported command returns error", pass,
+          fail);
 
     /* ── XDEL ─────────────────────────────────────────────────────────── */
     proxy_cmd(fd, r, sizeof(r), 3, "XDEL", "tc:st:s1", id1);

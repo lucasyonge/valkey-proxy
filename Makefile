@@ -1,17 +1,3 @@
-CC      = gcc
-CFLAGS  = -O2 -Wall -Wextra -Isrc -pthread
-LDFLAGS = -pthread
-TARGET  = valkey_cluster_proxy
-SRC     = src
-OBJS    = $(SRC)/valkey_proxy.o $(SRC)/fanout_handlers.o $(SRC)/ae.o $(SRC)/allowed_cmds.o
-
-# TLS support (client ↔ proxy). Disable with: make NO_TLS=1
-ifeq ($(NO_TLS),)
-OPENSSL_PREFIX ?= $(shell brew --prefix openssl 2>/dev/null || echo /usr)
-CFLAGS  += -DUSE_TLS -I$(OPENSSL_PREFIX)/include
-LDFLAGS += -L$(OPENSSL_PREFIX)/lib -lssl -lcrypto
-endif
-
 POOL_CC      = gcc
 POOL_CFLAGS  = -O2 -Wall -Wextra -Isrc -pthread
 POOL_LDFLAGS = -pthread
@@ -27,27 +13,28 @@ POOL_TARGET = valkey-proxy
 POOL_SRCS   = src/valkey-proxy.c src/config.c src/cluster.c src/resp.c \
               src/pool.c src/cmd.c src/fanout.c src/pubsub.c src/acl.c src/client.c \
               src/hello.c src/event_loop.c
-POOL_HDEPS  = src/proxy.h src/event_loop.h src/el_epoll.c src/el_kqueue.c \
-              src/el_evport.c src/el_select.c
+BUILD_DIR   = build
+POOL_OBJS   = $(POOL_SRCS:%.c=$(BUILD_DIR)/%.o)
 
-$(POOL_TARGET): $(POOL_SRCS) $(POOL_HDEPS)
-	$(POOL_CC) $(POOL_CFLAGS) -o $@ $(POOL_SRCS) $(POOL_LDFLAGS)
+# Print a short "CC <file>" line per step; run "make V=1" to see full commands
+ifeq ($(V),1)
+Q =
+else
+Q = @
+endif
 
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
+$(POOL_TARGET): $(POOL_OBJS)
+	@echo "    LINK $@"
+	$(Q)$(POOL_CC) -o $@ $(POOL_OBJS) $(POOL_LDFLAGS)
 
-$(SRC)/valkey_proxy.o: $(SRC)/valkey_proxy.c $(SRC)/valkey_proxy.h $(SRC)/fanout_handlers.h $(SRC)/ae.h
-	$(CC) $(CFLAGS) -c $(SRC)/valkey_proxy.c -o $@
+# -MMD -MP tracks header dependencies, including the el_*.c files that
+# event_loop.c #include's
+$(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	@echo "    CC   $<"
+	$(Q)$(POOL_CC) $(POOL_CFLAGS) -MMD -MP -c $< -o $@
 
-$(SRC)/allowed_cmds.o: $(SRC)/allowed_cmds.c $(SRC)/allowed_cmds.h
-	$(CC) $(CFLAGS) -c $(SRC)/allowed_cmds.c -o $@
-
-$(SRC)/fanout_handlers.o: $(SRC)/fanout_handlers.c $(SRC)/fanout_handlers.h $(SRC)/valkey_proxy.h
-	$(CC) $(CFLAGS) -c $(SRC)/fanout_handlers.c -o $@
-
-# ae.c #include's ae_epoll.c (Linux) or ae_kqueue.c (macOS/BSD) at compile time
-$(SRC)/ae.o: $(SRC)/ae.c $(SRC)/ae.h $(SRC)/ae_epoll.c $(SRC)/ae_kqueue.c $(SRC)/valkey_proxy.h
-	$(CC) $(CFLAGS) -c $(SRC)/ae.c -o $@
+-include $(POOL_OBJS:.o=.d)
 
 # ── integration tests ────────────────────────────────────────────────────
 TEST_CC     = gcc
@@ -71,14 +58,25 @@ TEST_SRCS = test/run-test.c test/acl/test_acl.c test/acl/acl_fixture.c test/bitm
             test/modules/json/test_json.c \
             test/modules/search/test_search.c
 
-run-test: $(TEST_SRCS) test/test_common.h
-	$(TEST_CC) $(TEST_CFLAGS) -o run-test $(TEST_SRCS)
+TEST_OBJS = $(TEST_SRCS:%.c=$(BUILD_DIR)/%.o)
+
+run-test: $(TEST_OBJS)
+	@echo "    LINK $@"
+	$(Q)$(TEST_CC) $(TEST_CFLAGS) -o $@ $(TEST_OBJS)
+
+$(TEST_OBJS): $(BUILD_DIR)/%.o: %.c
+	@mkdir -p $(dir $@)
+	@echo "    CC   $<"
+	$(Q)$(TEST_CC) $(TEST_CFLAGS) -MMD -MP -c $< -o $@
+
+-include $(TEST_OBJS:.o=.d)
 
 # Usage: make test && ./run-test -h=<host> -p=<port>
 test: run-test
 
 clean:
-	rm -f $(OBJS) $(TARGET) $(POOL_TARGET) run-test
+	rm -f $(POOL_TARGET) run-test
+	rm -rf $(BUILD_DIR)
 
 # ── formatting ───────────────────────────────────────────────────────────
 FORMAT_SRCS = $(shell find src test -name '*.[ch]')

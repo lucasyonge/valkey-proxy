@@ -255,7 +255,6 @@ static const char *NON_TXN_CMDS[] = {"ACL",
                                      "XREAD",
                                      "XREADGROUP",
                                      "XREVRANGE",
-                                     "XSETID",
                                      "XTRIM",
                                      NULL};
 static const char *TXN_CMDS[] = {"DISCARD", "EXEC", "MULTI", "UNWATCH", "WATCH", NULL};
