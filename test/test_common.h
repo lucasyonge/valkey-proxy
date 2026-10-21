@@ -144,13 +144,14 @@ static __attribute__((unused)) int resp_next_binary(int fd, char *out, int outsz
     return r;
 }
 
-/* Read a * array and check whether it contains target string. Drains all elements. */
+/* Read a * array and check whether it contains target string. Drains all elements.
+ * Elements may be bulk or simple strings (e.g. FT._LIST replies with +name). */
 static __attribute__((unused)) int resp_array_contains(int fd, int count, const char *target) {
     int found = 0;
     char tmp[512];
     for (int i = 0; i < count; i++) {
         resp_next_str(fd, tmp, sizeof(tmp));
-        if (strcmp(tmp, target) == 0) found = 1;
+        if (strcmp(tmp, target) == 0 || (tmp[0] == '+' && strcmp(tmp + 1, target) == 0)) found = 1;
     }
     return found;
 }

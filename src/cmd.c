@@ -54,6 +54,7 @@ static const char *NON_TXN_CMDS[] = {"ACL",
                                      "FLUSHALL",
                                      "FLUSHDB",
                                      "FT._LIST",
+                                     "FT.AGGREGATE",
                                      "FT.CREATE",
                                      "FT.DROPINDEX",
                                      "FT.INFO",
@@ -390,10 +391,11 @@ static const char *MULTI_KEY_CMDS[] = {"BITOP",
                                        NULL};
 static const char *FANOUT_CMDS[] = {"DEL",  "EXISTS", "JSON.MGET", "JSON.MSET", "LCS", "MGET",
                                     "MSET", "MSETEX", "TOUCH",     "UNLINK",    NULL};
-static const char *NO_KEY_CMDS[] = {
-    "CLIENT",       "COMMAND", "COMMANDLOG", "DBSIZE",   "ECHO",   "FLUSHALL", "FLUSHDB", "FT._LIST", "FT.CREATE",
-    "FT.DROPINDEX", "FT.INFO", "FT.SEARCH",  "FUNCTION", "HELLO",  "INFO",     "KEYS",    "LOLWUT",   "MODULE",
-    "PING",         "PUBSUB",  "RANDOMKEY",  "SCAN",     "SCRIPT", "SELECT",   "SLOWLOG", "TIME",     NULL};
+static const char *NO_KEY_CMDS[] = {"CLIENT",    "COMMAND",  "COMMANDLOG",   "DBSIZE",    "ECHO",         "FLUSHALL",
+                                    "FLUSHDB",   "FT._LIST", "FT.AGGREGATE", "FT.CREATE", "FT.DROPINDEX", "FT.INFO",
+                                    "FT.SEARCH", "FUNCTION", "HELLO",        "INFO",      "KEYS",         "LOLWUT",
+                                    "MODULE",    "PING",     "PUBSUB",       "RANDOMKEY", "SCAN",         "SCRIPT",
+                                    "SELECT",    "SLOWLOG",  "TIME",         NULL};
 
 /* Commands whose RESP2 reply has a nil *array* rather than a nil bulk
  * string somewhere in it -- see resp3_downgrade()'s nil_array_depth

@@ -441,88 +441,6 @@ static char *fanout_agg_slowlog_get(FanoutCtx *ctx, int *out_len) {
     return out;
 }
 
-/* FT.SEARCH: each node's reply is a RESP array shaped
- * [total_results, id, fields, id, fields, ...] (or [total_results, id, id,
- * ...] under NOCONTENT). Everything past element 0 is treated as an opaque
- * "doc tail" blob and concatenated across nodes; element 0 (an integer) is
- * summed instead. A node that errors or replies something other than an
- * array is skipped rather than failing the whole cluster-wide search.
- *
- * Known limitation: each node already applied its own LIMIT/SORTBY before
- * the proxy ever sees the reply, so this is a concatenation of N
- * independent per-node top-K lists, not a globally re-sorted top-K across
- * the whole cluster. */
-static char *fanout_agg_ft_search(FanoutCtx *ctx, int *out_len) {
-    long long total = 0;
-    int n_elems = 1; /* the merged total_results element */
-    int tail_data = 0;
-    int any_ok = 0;
-    const char **tails = calloc((size_t)ctx->nsubs, sizeof(char *));
-    int *tail_lens = calloc((size_t)ctx->nsubs, sizeof(int));
-    if (!tails || !tail_lens) {
-        free(tails);
-        free(tail_lens);
-        return NULL;
-    }
-
-    for (int i = 0; i < ctx->nsubs; i++) {
-        FanoutSub *s = &ctx->subs[i];
-        if (s->error || !s->rbuf || s->rbuf[0] != '*') continue;
-        int cnt = atoi(s->rbuf + 1);
-        int el0_len;
-        const char *el0 = resp_array_nth(s->rbuf, s->rbuf_len, 0, &el0_len);
-        if (!el0 || el0[0] != ':') continue;
-        total += atoll(el0 + 1);
-        any_ok = 1;
-        if (cnt > 1) {
-            int el1_len;
-            const char *el1 = resp_array_nth(s->rbuf, s->rbuf_len, 1, &el1_len);
-            if (el1) {
-                tails[i] = el1;
-                tail_lens[i] = s->rbuf_len - (int)(el1 - s->rbuf);
-                tail_data += tail_lens[i];
-                n_elems += cnt - 1;
-            }
-        }
-    }
-
-    if (!any_ok) {
-        free(tails);
-        free(tail_lens);
-        const char *e = "-ERR fan-out backend error\r\n";
-        char *r = strdup(e);
-        *out_len = (int)strlen(e);
-        return r;
-    }
-
-    char total_buf[32];
-    int total_len = snprintf(total_buf, sizeof(total_buf), ":%lld\r\n", total);
-    char hdr[32];
-    int hdr_len = snprintf(hdr, sizeof(hdr), "*%d\r\n", n_elems);
-
-    char *out = malloc((size_t)(hdr_len + total_len + tail_data));
-    if (!out) {
-        free(tails);
-        free(tail_lens);
-        return NULL;
-    }
-    int off = 0;
-    memcpy(out + off, hdr, (size_t)hdr_len);
-    off += hdr_len;
-    memcpy(out + off, total_buf, (size_t)total_len);
-    off += total_len;
-    for (int i = 0; i < ctx->nsubs; i++) {
-        if (tails[i]) {
-            memcpy(out + off, tails[i], (size_t)tail_lens[i]);
-            off += tail_lens[i];
-        }
-    }
-    free(tails);
-    free(tail_lens);
-    *out_len = off;
-    return out;
-}
-
 static char *fanout_agg_mget(FanoutCtx *ctx, int *out_len) {
     int total = ctx->total_keys;
     char hdr[32];
@@ -1239,10 +1157,6 @@ void fanout_aggregate_and_reply(Worker *w, FanoutCtx *ctx) {
         resp = fanout_agg_command_list(ctx, &resp_len);
     } else if (!strcmp(ctx->cmd, "CMDCOUNT")) {
         resp = fanout_agg_command_count(ctx, &resp_len);
-    } else if (!strcmp(ctx->cmd, "FT.CREATE") || !strcmp(ctx->cmd, "FT.DROPINDEX")) {
-        resp = fanout_agg_ok(ctx, &resp_len);
-    } else if (!strcmp(ctx->cmd, "FT.SEARCH")) {
-        resp = fanout_agg_ft_search(ctx, &resp_len);
     } else {
         resp = fanout_agg_sum(ctx, &resp_len);
     }
@@ -3507,7 +3421,41 @@ void handle_nokey_cmd(Worker *w, ClientConn *client, const char *cmd, int cmdlen
         return;
     }
     if (!strcmp(cmd, "RANDOMKEY") || !strcmp(cmd, "INFO") || !strcmp(cmd, "LOLWUT") || !strcmp(cmd, "FT._LIST") ||
-        !strcmp(cmd, "FT.INFO")) {
+        !strcmp(cmd, "FT.INFO") || !strcmp(cmd, "FT.CREATE") || !strcmp(cmd, "FT.DROPINDEX") ||
+        !strcmp(cmd, "FT.SEARCH") || !strcmp(cmd, "FT.AGGREGATE")) {
+        /* FT.INFO <index> with no scope options defaults to the backend's
+         * LOCAL mode (only that one shard's stats); rewrite it to
+         * FT.INFO <index> PRIMARY ALLSHARDS so the reply covers every
+         * primary. Explicit options are forwarded as-is. */
+        const char *idx, *extra;
+        int idxlen, extralen;
+        if (!strcmp(cmd, "FT.INFO") && resp_get_nth_arg(client->hbuf, cmdlen, 1, &idx, &idxlen) &&
+            !resp_get_nth_arg(client->hbuf, cmdlen, 2, &extra, &extralen)) {
+            const char *args[3] = {idx, "PRIMARY", "ALLSHARDS"};
+            int arglens[3] = {idxlen, 7, 9};
+            int built_len;
+            char *built = build_resp_cmd("FT.INFO", 7, args, arglens, 3, &built_len);
+            if (!built) {
+                client_send_error(w, client, "out of memory");
+                client->hbuf_len = 0;
+                return;
+            }
+            if (client->pbuf_cap < built_len) {
+                char *tmp = realloc(client->pbuf, (size_t)built_len);
+                if (!tmp) {
+                    free(built);
+                    client_send_error(w, client, "out of memory");
+                    client->hbuf_len = 0;
+                    return;
+                }
+                client->pbuf = tmp;
+                client->pbuf_cap = built_len;
+            }
+            memcpy(client->pbuf, built, (size_t)built_len);
+            client->pbuf_len = built_len;
+            client->using_pbuf = 1;
+            free(built);
+        }
         int ni = topo_first_master(w);
         DbGroup *grp = db_group_get(w, client->db);
         if (!grp) {

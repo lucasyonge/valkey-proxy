@@ -35,7 +35,7 @@ ID/GETNAME/SETNAME/INFO/HELP`, `SCRIPT HELP`, `FUNCTION HELP`, and the help-text
 `ACL HELP`.
 
 ### 3.2 Single-node forward (pick one master, relay its reply verbatim)
-`RANDOMKEY` `LOLWUT` `FT._LIST` `FT.INFO` `OBJECT HELP` `XGROUP HELP` `XINFO HELP`
+`RANDOMKEY` `LOLWUT` `FT._LIST` `FT.INFO` `FT.CREATE` `FT.DROPINDEX` `FT.SEARCH` `FT.AGGREGATE` `OBJECT HELP` `XGROUP HELP` `XINFO HELP`
 `SCRIPT EXISTS/SHOW` `FUNCTION LIST` `MODULE LIST` `COMMAND HELP/GETKEYS/GETKEYSANDFLAGS`
 `SLOWLOG HELP` `COMMANDLOG HELP` `PUBSUB HELP` `ACL LIST/USERS/WHOAMI/GETUSER/DRYRUN` (uses the
 shared connection while unauthenticated / authenticated as the default user; once a client has
@@ -52,8 +52,7 @@ anything) if it isn't.
 ### 3.3 Broadcast to all masters, results merged
 `DBSIZE` (summed), `KEYS` (concatenated), `SCAN` (each node's cursor is encoded into the returned
 cursor value; scanning proceeds per node and results are reassembled), `FLUSHALL`/`FLUSHDB`
-(`+OK` only if every node succeeds), `FT.CREATE`/`FT.DROPINDEX` (`+OK` only if every node
-succeeds), `FT.SEARCH` (result sets merged), `PUBSUB CHANNELS`/`SHARDCHANNELS` (deduplicated and
+(`+OK` only if every node succeeds), `PUBSUB CHANNELS`/`SHARDCHANNELS` (deduplicated and
 merged), `PUBSUB NUMSUB`/`SHARDNUMSUB` (per-channel counts summed), `PUBSUB NUMPAT` (summed),
 `SLOWLOG GET [count]` (each node's entries merged newest first by timestamp and truncated to
 `count` — default 10, `-1` = all; entry ids are per-node and so not unique across the merged

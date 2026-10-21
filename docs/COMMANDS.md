@@ -406,13 +406,13 @@ These commands require the Search module (valkey-search) to be loaded on every b
 
 | Command | Notes |
 |---|---|
-| `FT.AGGREGATE` | Planned |
-| `FT.CREATE` | Broadcast to every primary node |
-| `FT.CURSOR` | Planned |
-| `FT.DROPINDEX` | Broadcast to every primary node |
-| `FT.HYBRID` | Planned |
-| `FT.INFO` | Forwarded to one primary node |
-| `FT.SEARCH` | Broadcast to every primary node |
+| `FT.AGGREGATE` | Forwarded to one primary node |
+| `FT.CREATE` | Forwarded to one primary node |
+| `FT.CURSOR` | Planned, pending valkey-search 1.3 GA |
+| `FT.DROPINDEX` | Forwarded to one primary node |
+| `FT.HYBRID` | Planned, pending valkey-search 1.3 GA |
+| `FT.INFO` | Forwarded to one primary node; `FT.INFO <index>` with no options is rewritten to `FT.INFO <index> PRIMARY ALLSHARDS`, explicit options are forwarded as-is |
+| `FT.SEARCH` | Forwarded to one primary node |
 | `FT._LIST` | Forwarded to one primary node |
 
 ## Unsupported commands
