@@ -336,6 +336,20 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
     CHECK(n > 0 && strstr(raw, "_\r\n") != NULL, "RESP3 GEOPOS: missing member's slot is native null (_), not *-1",
           pass, fail);
 
+    /* FUNCTION STATS is a fan-out whose per-node entries the proxy builds
+     * itself (see fanout_agg_function_stats()), so it must re-encode them
+     * as maps for a RESP3 client: *N of %3 {node-ip, running_script,
+     * engines}, with engines and each engine's stats also maps. */
+    n = resp_send_raw_reply(fd3, raw, sizeof(raw), 2, "FUNCTION", "STATS");
+    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) >= 1, "RESP3 FUNCTION STATS: outer array, one entry per master",
+          pass, fail);
+    CHECK(n > 0 && strstr(raw, "%3\r\n$7\r\nnode-ip\r\n") != NULL && strstr(raw, "*6\r\n") == NULL,
+          "RESP3 FUNCTION STATS: per-node entry is a %3 map, not a flat *6", pass, fail);
+    CHECK(n > 0 && strstr(raw, "running_script\r\n_\r\n") != NULL,
+          "RESP3 FUNCTION STATS: idle running_script is native null (_)", pass, fail);
+    CHECK(n > 0 && strstr(raw, "engines\r\n%") != NULL && strstr(raw, "$3\r\nLUA\r\n%2\r\n") != NULL,
+          "RESP3 FUNCTION STATS: engines is a map, LUA stats a %2 map", pass, fail);
+
     /* ── the headline requirement: a brand-new RESP2 connection, opened
      * *after* the global flag flipped and that has never itself said
      * "HELLO 3", must still see exactly the pre-RESP3 byte shapes ─────── */
@@ -392,6 +406,12 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
           fail);
     CHECK(n > 0 && strstr(raw, "$-1\r\n") != NULL,
           "RESP2 cross-slot MGET: missing key is nil bulk within the aggregated reply", pass, fail);
+
+    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 2, "FUNCTION", "STATS");
+    CHECK(n > 0 && raw[0] == '*' && strstr(raw, "*6\r\n$7\r\nnode-ip\r\n") != NULL && strchr(raw, '%') == NULL,
+          "RESP2 FUNCTION STATS: per-node entry stays a flat *6 array, no maps", pass, fail);
+    CHECK(n > 0 && strstr(raw, "running_script\r\n$-1\r\n") != NULL && strstr(raw, "$3\r\nLUA\r\n*4\r\n") != NULL,
+          "RESP2 FUNCTION STATS: nil bulk running_script, LUA stats a flat *4", pass, fail);
 
     /* ── pub/sub: push type ('>') for a RESP3 subscriber, plain array ('*')
      * for a RESP2 one, for both the confirmation and the pushed message ── */

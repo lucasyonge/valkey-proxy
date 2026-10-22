@@ -742,12 +742,44 @@ static char *fanout_agg_lcs(FanoutCtx *ctx, int *out_len) {
     return resp;
 }
 
+/* Re-encode a (RESP2-downgraded) reply element for a RESP3 client: a nil
+ * becomes `_`, and a flat key/value array becomes a `%` map, recursing
+ * into the values for `depth` levels (depth 0 = only the nil fixup; keys
+ * and deeper values are copied verbatim). Writes into dst, which must hold
+ * at least len bytes -- the result is never longer than the input. Returns
+ * the number of bytes written. */
+static int resp2_pairs_to_map(const char *src, int len, int depth, char *dst) {
+    if ((src[0] == '$' || src[0] == '*') && atoi(src + 1) < 0) {
+        memcpy(dst, "_\r\n", 3);
+        return 3;
+    }
+    int n = src[0] == '*' ? atoi(src + 1) : 0;
+    if (depth <= 0 || src[0] != '*' || n % 2) {
+        memcpy(dst, src, (size_t)len);
+        return len;
+    }
+    int off = snprintf(dst, 32, "%%%d\r\n", n / 2);
+    for (int i = 0; i < n; i++) {
+        int el;
+        const char *e = resp_array_nth(src, len, i, &el);
+        if (!e) {
+            memcpy(dst, src, (size_t)len);
+            return len;
+        }
+        off += resp2_pairs_to_map(e, el, i % 2 ? depth - 1 : 0, dst + off);
+    }
+    return off;
+}
+
 /* FUNCTION STATS fan-out: rather than merging every node's running_script/
  * engines into one summary, report one flat map per responding master
  * (node-ip / running_script / engines), since each node's function
  * execution state is independent of the others. Nodes that errored or
- * didn't reply with the expected *4 array are skipped. */
+ * didn't reply with the expected *4 array are skipped. sub->rbuf is always
+ * RESP2 by now, so for a RESP3 client the per-node entry, running_script
+ * and engines (plus each engine's stats) are re-encoded as maps. */
 static char *fanout_agg_function_stats(Worker *w, FanoutCtx *ctx, int *out_len) {
+    int resp3 = ctx->client->resp == 3;
     char *entries[MAX_FANOUT_SUBS];
     int entry_lens[MAX_FANOUT_SUBS];
     int nentries = 0;
@@ -765,8 +797,8 @@ static char *fanout_agg_function_stats(Worker *w, FanoutCtx *ctx, int *out_len) 
         int ipport_len = snprintf(ipport, sizeof(ipport), "%s:%d", nd->ip, nd->port);
 
         char hdr[196];
-        int hdr_len = snprintf(hdr, sizeof(hdr), "*6\r\n$7\r\nnode-ip\r\n$%d\r\n%s\r\n$14\r\nrunning_script\r\n",
-                               ipport_len, ipport);
+        int hdr_len = snprintf(hdr, sizeof(hdr), "%s\r\n$7\r\nnode-ip\r\n$%d\r\n%s\r\n$14\r\nrunning_script\r\n",
+                               resp3 ? "%3" : "*6", ipport_len, ipport);
         static const char *engines_hdr = "$7\r\nengines\r\n";
         int engines_hdr_len = (int)strlen(engines_hdr);
 
@@ -776,12 +808,21 @@ static char *fanout_agg_function_stats(Worker *w, FanoutCtx *ctx, int *out_len) 
         int off = 0;
         memcpy(entry + off, hdr, (size_t)hdr_len);
         off += hdr_len;
-        memcpy(entry + off, rs, (size_t)rs_len);
-        off += rs_len;
-        memcpy(entry + off, engines_hdr, (size_t)engines_hdr_len);
-        off += engines_hdr_len;
-        memcpy(entry + off, en, (size_t)en_len);
-        off += en_len;
+        if (resp3) {
+            /* running_script: nil or a name/command/duration_ms map;
+             * engines: engine name -> map of that engine's counters. */
+            off += resp2_pairs_to_map(rs, rs_len, 1, entry + off);
+            memcpy(entry + off, engines_hdr, (size_t)engines_hdr_len);
+            off += engines_hdr_len;
+            off += resp2_pairs_to_map(en, en_len, 2, entry + off);
+        } else {
+            memcpy(entry + off, rs, (size_t)rs_len);
+            off += rs_len;
+            memcpy(entry + off, engines_hdr, (size_t)engines_hdr_len);
+            off += engines_hdr_len;
+            memcpy(entry + off, en, (size_t)en_len);
+            off += en_len;
+        }
 
         entries[nentries] = entry;
         entry_lens[nentries] = off;
