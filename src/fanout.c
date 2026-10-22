@@ -1422,14 +1422,15 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         return;
     }
 
-    if (is_mset) {
+    if (is_mset || is_json_mset) {
+        int stride = is_mset ? 2 : 3;
         int sub_for_key[MAX_FANOUT_KEYS];
         int sub_slot_val[MAX_FANOUT_SUBS];
         int sub_node_val[MAX_FANOUT_SUBS];
         int nsubs = 0;
 
         for (int i = 0; i < nkeys; i++) {
-            int ki = i * 2;
+            int ki = i * stride;
             int slt = key_slot(ap[ki], al[ki]);
             int found = -1;
             for (int s = 0; s < nsubs; s++)
@@ -1475,18 +1476,17 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         }
 
         for (int s = 0; s < nsubs; s++) {
-            const char *sa[MAX_FANOUT_KEYS * 2];
-            int sl[MAX_FANOUT_KEYS * 2];
+            const char *sa[MAX_FANOUT_KEYS * 3];
+            int sl[MAX_FANOUT_KEYS * 3];
             int sn = 0;
             for (int i = 0; i < nkeys; i++) {
                 if (sub_for_key[i] != s) continue;
-                int ki = i * 2;
-                sa[sn] = ap[ki];
-                sl[sn] = al[ki];
-                sn++;
-                sa[sn] = ap[ki + 1];
-                sl[sn] = al[ki + 1];
-                sn++;
+                int ki = i * stride;
+                for (int j = 0; j < stride; j++) {
+                    sa[sn] = ap[ki + j];
+                    sl[sn] = al[ki + j];
+                    sn++;
+                }
             }
             int cmdlen;
             char *cmdbuf = build_resp_cmd(cmd, (int)strlen(cmd), sa, sl, sn, &cmdlen);
