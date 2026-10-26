@@ -984,13 +984,133 @@ static char *fanout_agg_command_info_named(FanoutCtx *ctx, int *out_len) {
     return command_info_build_array(elems, elem_lens, n, out_len);
 }
 
+/* True if the RESP2 element e (el bytes) is a bulk string equal to key. */
+static int resp_bulk_equals(const char *e, int el, const char *key) {
+    int vlen;
+    const char *v = resp_parse_bulk_str(e, el, &vlen);
+    return v && vlen == (int)strlen(key) && !memcmp(v, key, (size_t)vlen);
+}
+
+/* Copy a RESP2 array as-is except for its type byte (e.g. '~' for a set).
+ * Writes into dst, which must hold at least len bytes. */
+static int resp2_array_retype(const char *src, int len, char type, char *dst) {
+    memcpy(dst, src, (size_t)len);
+    if (src[0] == '*' && atoi(src + 1) >= 0) dst[0] = type;
+    return len;
+}
+
+/* Re-encode one COMMAND DOCS argument (a flat key/value array) as a RESP3
+ * map: "flags" becomes a set and nested "arguments" recurse. Same dst/
+ * length contract as resp2_pairs_to_map(). */
+static int command_docs_arg_to_resp3(const char *src, int len, char *dst);
+
+static int command_docs_args_to_resp3(const char *src, int len, char *dst) {
+    int n = src[0] == '*' ? atoi(src + 1) : -1;
+    if (n < 0) {
+        memcpy(dst, src, (size_t)len);
+        return len;
+    }
+    int off = snprintf(dst, 32, "*%d\r\n", n);
+    for (int i = 0; i < n; i++) {
+        int el;
+        const char *e = resp_array_nth(src, len, i, &el);
+        if (!e) {
+            memcpy(dst, src, (size_t)len);
+            return len;
+        }
+        off += command_docs_arg_to_resp3(e, el, dst + off);
+    }
+    return off;
+}
+
+static int command_docs_arg_to_resp3(const char *src, int len, char *dst) {
+    int n = src[0] == '*' ? atoi(src + 1) : -1;
+    if (n < 0 || n % 2) {
+        memcpy(dst, src, (size_t)len);
+        return len;
+    }
+    int off = snprintf(dst, 32, "%%%d\r\n", n / 2);
+    for (int i = 0; i + 1 < n; i += 2) {
+        int kl, vl;
+        const char *k = resp_array_nth(src, len, i, &kl);
+        const char *v = resp_array_nth(src, len, i + 1, &vl);
+        if (!k || !v) {
+            memcpy(dst, src, (size_t)len);
+            return len;
+        }
+        memcpy(dst + off, k, (size_t)kl);
+        off += kl;
+        if (resp_bulk_equals(k, kl, "flags"))
+            off += resp2_array_retype(v, vl, '~', dst + off);
+        else if (resp_bulk_equals(k, kl, "arguments"))
+            off += command_docs_args_to_resp3(v, vl, dst + off);
+        else {
+            memcpy(dst + off, v, (size_t)vl);
+            off += vl;
+        }
+    }
+    return off;
+}
+
+/* Re-encode one command's COMMAND DOCS entry (a flat key/value array) the
+ * way Valkey replies to a RESP3 client: the entry itself is a map,
+ * "history" and "doc_flags" are sets, "arguments" is an array of argument
+ * maps, and "subcommands" is a map of subcommand name -> doc map. Same
+ * dst/length contract as resp2_pairs_to_map(). */
+static int command_docs_to_resp3(const char *src, int len, char *dst) {
+    int n = src[0] == '*' ? atoi(src + 1) : -1;
+    if (n < 0 || n % 2) {
+        memcpy(dst, src, (size_t)len);
+        return len;
+    }
+    int off = snprintf(dst, 32, "%%%d\r\n", n / 2);
+    for (int i = 0; i + 1 < n; i += 2) {
+        int kl, vl;
+        const char *k = resp_array_nth(src, len, i, &kl);
+        const char *v = resp_array_nth(src, len, i + 1, &vl);
+        if (!k || !v) {
+            memcpy(dst, src, (size_t)len);
+            return len;
+        }
+        memcpy(dst + off, k, (size_t)kl);
+        off += kl;
+        if (resp_bulk_equals(k, kl, "history") || resp_bulk_equals(k, kl, "doc_flags")) {
+            off += resp2_array_retype(v, vl, '~', dst + off);
+        } else if (resp_bulk_equals(k, kl, "arguments")) {
+            off += command_docs_args_to_resp3(v, vl, dst + off);
+        } else if (resp_bulk_equals(k, kl, "subcommands") && v[0] == '*' && atoi(v + 1) % 2 == 0) {
+            int sn = atoi(v + 1);
+            int sub_off = snprintf(dst + off, 32, "%%%d\r\n", sn / 2);
+            for (int j = 0; j + 1 < sn; j += 2) {
+                int snl, sdl;
+                const char *sname = resp_array_nth(v, vl, j, &snl);
+                const char *sdoc = resp_array_nth(v, vl, j + 1, &sdl);
+                if (!sname || !sdoc) {
+                    memcpy(dst, src, (size_t)len);
+                    return len;
+                }
+                memcpy(dst + off + sub_off, sname, (size_t)snl);
+                sub_off += snl;
+                sub_off += command_docs_to_resp3(sdoc, sdl, dst + off + sub_off);
+            }
+            off += sub_off;
+        } else {
+            memcpy(dst + off, v, (size_t)vl);
+            off += vl;
+        }
+    }
+    return off;
+}
+
 /* COMMAND DOCS [<cmd> ...]: the backend reply is a flat array alternating
  * command name and that command's doc map (name0, docs0, name1, docs1,
  * ...), not an array of per-command sub-arrays like COMMAND INFO. Real
  * Valkey/Redis semantics already drop unknown names from the output
  * entirely rather than padding with nil, so both the no-argument and the
  * with-arguments forms use the same filter-and-shrink strategy: keep only
- * the (name, docs) pairs whose name this proxy supports. */
+ * the (name, docs) pairs whose name this proxy supports. sub->rbuf is
+ * always RESP2 by now, so for a RESP3 client the kept pairs are re-encoded
+ * as a map of name -> doc map (see command_docs_to_resp3()). */
 static char *fanout_agg_command_docs(FanoutCtx *ctx, int *out_len) {
     FanoutSub *s = &ctx->subs[0];
     if (s->error || !s->rbuf) {
@@ -1031,7 +1151,21 @@ static char *fanout_agg_command_docs(FanoutCtx *ctx, int *out_len) {
             kept++;
         }
     }
-    return command_info_build_array(elems, elem_lens, kept, out_len);
+    if (ctx->client->resp != 3) return command_info_build_array(elems, elem_lens, kept, out_len);
+
+    /* The re-encoded reply is never longer than the RESP2 one. */
+    int total = 32;
+    for (int i = 0; i < kept; i++) total += elem_lens[i];
+    char *out = malloc((size_t)total);
+    if (!out) return NULL;
+    int off = snprintf(out, 32, "%%%d\r\n", kept / 2);
+    for (int i = 0; i + 1 < kept; i += 2) {
+        memcpy(out + off, elems[i], (size_t)elem_lens[i]);
+        off += elem_lens[i];
+        off += command_docs_to_resp3(elems[i + 1], elem_lens[i + 1], out + off);
+    }
+    *out_len = off;
+    return out;
 }
 
 /* COMMAND LIST [FILTERBY ...]: unlike COMMAND INFO, the backend reply is

@@ -341,14 +341,39 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
      * as maps for a RESP3 client: *N of %3 {node-ip, running_script,
      * engines}, with engines and each engine's stats also maps. */
     n = resp_send_raw_reply(fd3, raw, sizeof(raw), 2, "FUNCTION", "STATS");
-    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) >= 1, "RESP3 FUNCTION STATS: outer array, one entry per master",
-          pass, fail);
+    CHECK(n > 0 && raw[0] == '*' && atoi(raw + 1) >= 1, "RESP3 FUNCTION STATS: outer array, one entry per master", pass,
+          fail);
     CHECK(n > 0 && strstr(raw, "%3\r\n$7\r\nnode-ip\r\n") != NULL && strstr(raw, "*6\r\n") == NULL,
           "RESP3 FUNCTION STATS: per-node entry is a %3 map, not a flat *6", pass, fail);
     CHECK(n > 0 && strstr(raw, "running_script\r\n_\r\n") != NULL,
           "RESP3 FUNCTION STATS: idle running_script is native null (_)", pass, fail);
     CHECK(n > 0 && strstr(raw, "engines\r\n%") != NULL && strstr(raw, "$3\r\nLUA\r\n%2\r\n") != NULL,
           "RESP3 FUNCTION STATS: engines is a map, LUA stats a %2 map", pass, fail);
+
+    /* COMMAND DOCS is filtered by the proxy (see fanout_agg_command_docs()),
+     * so it must re-encode the RESP2 reply for a RESP3 client: a map of
+     * name -> doc map, history/flags as sets, arguments as arrays of maps. */
+    n = resp_send_raw_reply(fd3, raw, sizeof(raw), 3, "COMMAND", "DOCS", "SET");
+    CHECK(n > 0 && !strncmp(raw, "%1\r\n$3\r\nset\r\n%", 14), "RESP3 COMMAND DOCS: outer map of name -> doc map", pass,
+          fail);
+    CHECK(n > 0 && strstr(raw, "$7\r\nhistory\r\n~") != NULL, "RESP3 COMMAND DOCS: history is a set", pass, fail);
+    CHECK(n > 0 && strstr(raw, "$9\r\narguments\r\n*") != NULL &&
+              strstr(raw, "%4\r\n$4\r\nname\r\n$3\r\nkey\r\n") != NULL,
+          "RESP3 COMMAND DOCS: arguments is an array of maps", pass, fail);
+    CHECK(n > 0 && strstr(raw, "$5\r\nflags\r\n~1\r\n+optional\r\n") != NULL && strstr(raw, "flags\r\n*") == NULL,
+          "RESP3 COMMAND DOCS: argument flags is a set", pass, fail);
+
+    /* A container command's "subcommands" is itself a map of subcommand
+     * name -> doc map, re-encoded recursively (history/arguments inside
+     * each subcommand get the same treatment). */
+    n = resp_send_raw_reply(fd3, raw, sizeof(raw), 3, "COMMAND", "DOCS", "CLIENT");
+    CHECK(n > 0 && !strncmp(raw, "%1\r\n$6\r\nclient\r\n%", 17) && strstr(raw, "$11\r\nsubcommands\r\n%") != NULL,
+          "RESP3 COMMAND DOCS: subcommands is a map", pass, fail);
+    CHECK(n > 0 && strstr(raw, "$11\r\nclient|kill\r\n%") != NULL, "RESP3 COMMAND DOCS: each subcommand's doc is a map",
+          pass, fail);
+    CHECK(n > 0 && strstr(raw, "history\r\n~") != NULL && strstr(raw, "history\r\n*") == NULL &&
+              strstr(raw, "flags\r\n*") == NULL,
+          "RESP3 COMMAND DOCS: subcommand history/flags are sets", pass, fail);
 
     /* ── the headline requirement: a brand-new RESP2 connection, opened
      * *after* the global flag flipped and that has never itself said
@@ -412,6 +437,14 @@ void run_resp3_tests(const char *host, int port, int *pass, int *fail) {
           "RESP2 FUNCTION STATS: per-node entry stays a flat *6 array, no maps", pass, fail);
     CHECK(n > 0 && strstr(raw, "running_script\r\n$-1\r\n") != NULL && strstr(raw, "$3\r\nLUA\r\n*4\r\n") != NULL,
           "RESP2 FUNCTION STATS: nil bulk running_script, LUA stats a flat *4", pass, fail);
+
+    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 3, "COMMAND", "DOCS", "SET");
+    CHECK(n > 0 && !strncmp(raw, "*2\r\n$3\r\nset\r\n*", 14) && strchr(raw, '%') == NULL && strchr(raw, '~') == NULL,
+          "RESP2 COMMAND DOCS: flat arrays, no maps or sets", pass, fail);
+
+    n = resp_send_raw_reply(fd2, raw, sizeof(raw), 3, "COMMAND", "DOCS", "CLIENT");
+    CHECK(n > 0 && strstr(raw, "$11\r\nsubcommands\r\n*") != NULL && strstr(raw, "$11\r\nclient|kill\r\n*") != NULL,
+          "RESP2 COMMAND DOCS: subcommands stays a flat array", pass, fail);
 
     /* ── pub/sub: push type ('>') for a RESP3 subscriber, plain array ('*')
      * for a RESP2 one, for both the confirmation and the pushed message ── */
