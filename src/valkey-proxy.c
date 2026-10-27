@@ -1,5 +1,6 @@
 #include "proxy.h"
 #include <sys/resource.h>
+#include <netinet/tcp.h>
 #include <signal.h>
 
 /* ── global definitions ─────────────────────────────────────────────── */
@@ -92,6 +93,12 @@ static void do_accept(Worker *w, int listen_fd) {
             continue;
         }
         set_nonblocking(fd);
+        if (listen_fd == g_tcp_fd) {
+            /* A pipelined batch is answered with several small writes in a
+             * row; under Nagle each would wait out the client's delayed ACK. */
+            int yes = 1;
+            setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
+        }
 
         ClientConn *client = calloc(1, sizeof(ClientConn));
         if (!client) {
@@ -154,7 +161,9 @@ static void *worker_thread(void *arg) {
     w->client_map = calloc((size_t)g_config.max_connection, sizeof(*w->client_map));
     w->backend_map = calloc((size_t)g_config.max_connection, sizeof(*w->backend_map));
     w->fd_mask = calloc((size_t)g_config.max_connection, sizeof(*w->fd_mask));
-    if (!w->client_map || !w->backend_map || !w->fd_mask) {
+    w->input_ready = calloc((size_t)g_config.max_connection, sizeof(*w->input_ready));
+    w->input_ready_len = 0;
+    if (!w->client_map || !w->backend_map || !w->fd_mask || !w->input_ready) {
         fprintf(stderr, "out of memory allocating connection tables (max_connection=%d)\n", g_config.max_connection);
         return NULL;
     }
@@ -205,7 +214,9 @@ static void *worker_thread(void *arg) {
     db_group_get(w, g_config.db);
 
     while (1) {
-        int n = el_poll(w->el, -1);
+        /* Don't block while some client still has pipelined commands queued
+         * in user space (see client_run_buffered_input()). */
+        int n = el_poll(w->el, w->input_ready_len ? 0 : -1);
         if (n < 0) break;
         if (w->topology_version_seen != topology_version_load()) worker_sync_topology(w);
         for (int i = 0; i < n; i++) {
@@ -240,6 +251,7 @@ static void *worker_thread(void *arg) {
                     handle_backend_readable(w, pc);
             }
         }
+        client_run_buffered_input(w);
     }
     return NULL;
 }

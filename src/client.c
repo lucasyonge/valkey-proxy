@@ -15,6 +15,89 @@ void client_send_crossslot(ClientConn *client) {
     (void)wr;
 }
 
+/* ── pipelined input ────────────────────────────────────────────────── */
+/* read() for client input: serves bytes pushed back by client_unread()
+ * first, and only touches the socket once qbuf has been drained. */
+static ssize_t client_read(ClientConn *client, char *buf, size_t len) {
+    if (client->qbuf_len > 0) {
+        int queued = client->qbuf_len - client->qbuf_off;
+        int n = (size_t)queued < len ? queued : (int)len;
+        memcpy(buf, client->qbuf + client->qbuf_off, (size_t)n);
+        client->qbuf_off += n;
+        if (client->qbuf_off == client->qbuf_len) client->qbuf_off = client->qbuf_len = 0;
+        return n;
+    }
+    return read(client->fd, buf, len);
+}
+
+/* Push data[0..len) back in front of whatever is still queued, so the next
+ * client_read() returns it first. Returns -1 on allocation failure. */
+static int client_unread(ClientConn *client, const char *data, int len) {
+    if (len <= 0) return 0;
+    if (client->qbuf_off >= len) {
+        client->qbuf_off -= len;
+        memcpy(client->qbuf + client->qbuf_off, data, (size_t)len);
+        return 0;
+    }
+    int queued = client->qbuf_len - client->qbuf_off;
+    if (client->qbuf_cap < queued + len) {
+        char *tmp = realloc(client->qbuf, (size_t)(queued + len));
+        if (!tmp) return -1;
+        client->qbuf = tmp;
+        client->qbuf_cap = queued + len;
+    }
+    memmove(client->qbuf + len, client->qbuf + client->qbuf_off, (size_t)queued);
+    memcpy(client->qbuf, data, (size_t)len);
+    client->qbuf_off = 0;
+    client->qbuf_len = queued + len;
+    return 0;
+}
+
+/* Only these states consume client input; in any other one the current
+ * command (or its reply) is still in flight, and reading the next one now
+ * would clobber it. Fan-out is the exception that never leaves its input
+ * state (nor unwatches EL_READABLE) while its sub-requests are out, so it
+ * is told apart by fanout_ctx instead; likewise an unsubscribe waiting on
+ * its fence (see handle_sub_conn_readable() in pubsub.c). */
+static int client_wants_input(const ClientConn *client) {
+    if (client->fanout_ctx) return 0;
+    if (client->sub_fence_pending) return 0;
+    return client->state == CS_READING_HDR || client->state == CS_BUFFERING_CMD || client->state == CS_STREAMING_CMD;
+}
+
+static int client_has_buffered_input(const ClientConn *client) {
+    return client->qbuf_len > 0 && client_wants_input(client);
+}
+
+void client_queue_buffered_input(Worker *w, ClientConn *client) {
+    if (client->input_queued) return;
+    client->input_queued = 1;
+    w->input_ready[w->input_ready_len++] = client;
+}
+
+static void client_unqueue_buffered_input(Worker *w, ClientConn *client) {
+    if (!client->input_queued) return;
+    for (int i = 0; i < w->input_ready_len; i++) {
+        if (w->input_ready[i] == client) {
+            w->input_ready[i] = w->input_ready[--w->input_ready_len];
+            break;
+        }
+    }
+    client->input_queued = 0;
+}
+
+/* Called once per worker loop iteration: resumes every client that went
+ * back to reading while pipelined commands were still queued in its qbuf.
+ * Bounded to the clients queued when the pass started, so one client's
+ * long pipeline can't starve the event loop. */
+void client_run_buffered_input(Worker *w) {
+    for (int budget = w->input_ready_len; budget > 0 && w->input_ready_len > 0; budget--) {
+        ClientConn *client = w->input_ready[--w->input_ready_len];
+        client->input_queued = 0;
+        if (client_has_buffered_input(client)) handle_client_readable(w, client);
+    }
+}
+
 void close_client(Worker *w, ClientConn *client) {
     int fd = client->fd;
     fd_unwatch(w, fd, EL_READABLE | EL_WRITABLE);
@@ -63,8 +146,10 @@ void close_client(Worker *w, ClientConn *client) {
         pool_destroy_conn(w, sc);
     }
     acl_teardown_all(w, client);
+    client_unqueue_buffered_input(w, client);
     free(client->wbuf);
     free(client->pbuf);
+    free(client->qbuf);
 #ifdef USE_TLS
     if (client->ssl) {
         SSL_free(client->ssl);
@@ -428,8 +513,174 @@ void handle_client_writable(Worker *w, ClientConn *client) {
     }
 }
 
+/* ── inline protocol ────────────────────────────────────────────────── */
+/* Like predixy, only these few connection-level commands may be sent in the
+ * inline (telnet-style) protocol; anything else must use RESP. */
+static const char *INLINE_CMDS[] = {"AUTH", "ECHO", "PING", "QUIT", "SELECT", NULL};
+#define INLINE_MAX_ARGS 8
+
+/* Split an inline command line in place following valkey's sdssplitargs()
+ * rules: whitespace-separated, "..." with \n \r \t \b \a \xHH escapes, and
+ * '...' with \' escapes. Stores up to max arguments in argv/argl and returns
+ * the total argument count, or -1 on unbalanced quotes. */
+static int inline_split_args(char *line, int len, const char **argv, int *argl, int max) {
+    int argc = 0, r = 0;
+    for (;;) {
+        while (r < len && isspace((unsigned char)line[r])) r++;
+        if (r >= len) return argc;
+        int start = r, wpos = r, inq = 0, insq = 0, done = 0;
+        while (!done) {
+            if (inq) {
+                if (r >= len) return -1;
+                if (line[r] == '\\' && r + 3 < len && line[r + 1] == 'x' && isxdigit((unsigned char)line[r + 2]) &&
+                    isxdigit((unsigned char)line[r + 3])) {
+                    char hex[3] = {line[r + 2], line[r + 3], '\0'};
+                    line[wpos++] = (char)strtol(hex, NULL, 16);
+                    r += 4;
+                } else if (line[r] == '\\' && r + 1 < len) {
+                    char c = line[r + 1];
+                    line[wpos++] = c == 'n'   ? '\n'
+                                   : c == 'r' ? '\r'
+                                   : c == 't' ? '\t'
+                                   : c == 'b' ? '\b'
+                                   : c == 'a' ? '\a'
+                                              : c;
+                    r += 2;
+                } else if (line[r] == '"') {
+                    /* closing quote must be followed by a space or nothing */
+                    if (r + 1 < len && !isspace((unsigned char)line[r + 1])) return -1;
+                    done = 1;
+                    r++;
+                } else {
+                    line[wpos++] = line[r++];
+                }
+            } else if (insq) {
+                if (r >= len) return -1;
+                if (line[r] == '\\' && r + 1 < len && line[r + 1] == '\'') {
+                    line[wpos++] = '\'';
+                    r += 2;
+                } else if (line[r] == '\'') {
+                    if (r + 1 < len && !isspace((unsigned char)line[r + 1])) return -1;
+                    done = 1;
+                    r++;
+                } else {
+                    line[wpos++] = line[r++];
+                }
+            } else if (r >= len || isspace((unsigned char)line[r])) {
+                done = 1;
+            } else if (line[r] == '"') {
+                inq = 1;
+                r++;
+            } else if (line[r] == '\'') {
+                insq = 1;
+                r++;
+            } else {
+                line[wpos++] = line[r++];
+            }
+        }
+        if (argc < max) {
+            argv[argc] = line + start;
+            argl[argc] = wpos - start;
+        }
+        argc++;
+    }
+}
+
+/* hbuf starts with an inline command (anything but '*'). Once its whole
+ * line has arrived, rewrite hbuf to the equivalent RESP command so the
+ * normal RESP path can take over; bytes after the line go back to qbuf.
+ * Returns 1 if hbuf now holds a RESP command, 0 if there is nothing to
+ * dispatch yet (line incomplete, empty, or rejected with an error reply),
+ * -1 if the client was closed. */
+static int client_inline_to_resp(Worker *w, ClientConn *client) {
+    char *nl = memchr(client->hbuf, '\n', (size_t)client->hbuf_len);
+    if (!nl) return 0;
+    int linelen = (int)(nl - client->hbuf);
+    if (client_unread(client, nl + 1, client->hbuf_len - linelen - 1) < 0) {
+        client_send_error(w, client, "out of memory");
+        close_client(w, client);
+        return -1;
+    }
+    client->hbuf_len = 0;
+    if (linelen > 0 && client->hbuf[linelen - 1] == '\r') linelen--;
+
+    const char *argv[INLINE_MAX_ARGS];
+    int argl[INLINE_MAX_ARGS];
+    int argc = inline_split_args(client->hbuf, linelen, argv, argl, INLINE_MAX_ARGS);
+    if (argc < 0) {
+        client_send_error(w, client, "Protocol error: unbalanced quotes in request");
+        close_client(w, client);
+        return -1;
+    }
+    if (argc == 0) return 0; /* empty line: ignored, like valkey does */
+
+    char name[16];
+    int namelen = argl[0] < (int)sizeof(name) - 1 ? argl[0] : (int)sizeof(name) - 1;
+    memcpy(name, argv[0], (size_t)namelen);
+    name[namelen] = '\0';
+    str_toupper(name);
+    if (argl[0] != namelen || !cmd_in_list(name, INLINE_CMDS)) {
+        client_send_error(w, client, "inline protocol only supports PING, ECHO, AUTH, SELECT and QUIT");
+        return 0;
+    }
+    if (argc > INLINE_MAX_ARGS) {
+        char msg[64];
+        for (char *p = name; *p; p++) *p = (char)tolower((unsigned char)*p);
+        snprintf(msg, sizeof(msg), "wrong number of arguments for '%s' command", name);
+        client_send_error(w, client, msg);
+        return 0;
+    }
+
+    int resp_len;
+    char *resp = build_resp_cmd(name, namelen, argv + 1, argl + 1, argc - 1, &resp_len);
+    if (!resp || resp_len > HDR_BUF_SIZE) {
+        free(resp);
+        client_send_error(w, client, resp ? "command header too large" : "out of memory");
+        close_client(w, client);
+        return -1;
+    }
+    memcpy(client->hbuf, resp, (size_t)resp_len);
+    client->hbuf_len = resp_len;
+    free(resp);
+    return 1;
+}
+
+/* hbuf may hold more than the command just parsed (a pipelining client
+ * writes several at once): keep exactly this command in hbuf and push the
+ * rest back to qbuf for the next round. Returns -1 if the client was
+ * closed. */
+static int client_trim_hbuf(Worker *w, ClientConn *client, int total_cmd_len) {
+    if (client->hbuf_len <= total_cmd_len) return 0;
+    if (client_unread(client, client->hbuf + total_cmd_len, client->hbuf_len - total_cmd_len) < 0) {
+        client_send_error(w, client, "out of memory");
+        close_client(w, client);
+        return -1;
+    }
+    client->hbuf_len = total_cmd_len;
+    return 0;
+}
+
 /* ── client readable: parse and dispatch ────────────────────────────── */
+static void client_process_input(Worker *w, ClientConn *client);
+
 void handle_client_readable(Worker *w, ClientConn *client) {
+    int fd = client->fd;
+    /* Commands that complete synchronously (local replies, errors) leave the
+     * client reading again right away -- keep going while the next pipelined
+     * command is already buffered. Each round consumes queued input, so this
+     * always terminates. */
+    do {
+        client_process_input(w, client);
+        if (w->client_map[fd] != client) return; /* closed */
+    } while (client_has_buffered_input(client));
+}
+
+static void client_process_input(Worker *w, ClientConn *client) {
+    /* E.g. a readable event racing a reply still being written: leave the
+     * bytes in the socket -- going back to reading always re-arms EL_READABLE
+     * via fd_watch(), which reports them again. */
+    if (!client_wants_input(client)) return;
+
     /* ── CS_STREAMING_CMD: forward cmd body bytes to backend ── */
     if (client->state == CS_STREAMING_CMD) {
         if (!client->pending_conn) {
@@ -453,7 +704,7 @@ void handle_client_readable(Worker *w, ClientConn *client) {
                 conn->wbuf = tmp;
                 conn->wbuf_cap = nc;
             }
-            ssize_t n = read(client->fd, conn->wbuf + conn->wbuf_len, (size_t)want);
+            ssize_t n = client_read(client, conn->wbuf + conn->wbuf_len, (size_t)want);
             if (n < 0) {
                 if (errno == EAGAIN) {
                     fd_watch(w, conn->fd, EL_WRITABLE);
@@ -501,7 +752,7 @@ void handle_client_readable(Worker *w, ClientConn *client) {
                 client->pbuf_cap = nc;
             }
             ssize_t n =
-                read(client->fd, client->pbuf + client->pbuf_len, (size_t)(client->pbuf_cap - client->pbuf_len));
+                client_read(client, client->pbuf + client->pbuf_len, (size_t)(client->pbuf_cap - client->pbuf_len));
             if (n < 0) {
                 if (errno == EAGAIN) return;
                 close_client(w, client);
@@ -519,6 +770,15 @@ void handle_client_readable(Worker *w, ClientConn *client) {
         }
 
         if (rlen > 0) {
+            /* Bytes past this command belong to the next pipelined one. */
+            if (client->pbuf_len > rlen) {
+                if (client_unread(client, client->pbuf + rlen, client->pbuf_len - rlen) < 0) {
+                    client_send_error(w, client, "out of memory");
+                    close_client(w, client);
+                    return;
+                }
+                client->pbuf_len = rlen;
+            }
             char cmd2[64] = "", key2[512] = "";
             int cl2 = 0, kl2 = 0, ac2 = 0, tc2 = 0;
             resp_parse_header(client->pbuf, client->pbuf_len, cmd2, &cl2, key2, &kl2, &ac2, &tc2);
@@ -548,7 +808,7 @@ void handle_client_readable(Worker *w, ClientConn *client) {
             return;
         }
 
-        ssize_t n = read(client->fd, client->hbuf + client->hbuf_len, (size_t)avail);
+        ssize_t n = client_read(client, client->hbuf + client->hbuf_len, (size_t)avail);
         if (n < 0) {
             if (errno == EAGAIN) return;
             close_client(w, client);
@@ -560,6 +820,11 @@ void handle_client_readable(Worker *w, ClientConn *client) {
         }
         client->hbuf_len += (int)n;
 
+        if (client->hbuf[0] != '*') {
+            int r = client_inline_to_resp(w, client);
+            if (r < 0) return;
+            if (r == 0) continue; /* need the rest of the line, or nothing to run */
+        }
         consumed = resp_parse_header(client->hbuf, client->hbuf_len, cmd, &cmdlen, key, &keylen, &argc, &total_cmd_len);
         if (consumed != 0) break;
         /* consumed==0: header incomplete, keep draining the socket */
@@ -569,6 +834,7 @@ void handle_client_readable(Worker *w, ClientConn *client) {
         close_client(w, client);
         return;
     }
+    if (client_trim_hbuf(w, client, total_cmd_len) < 0) return;
 
     str_toupper(cmd);
     PoolType pt = route_command(client, cmd);
@@ -591,7 +857,7 @@ void handle_client_readable(Worker *w, ClientConn *client) {
             return;
         }
         while (client->hbuf_len < total_cmd_len) {
-            ssize_t n = read(client->fd, client->hbuf + client->hbuf_len, (size_t)(HDR_BUF_SIZE - client->hbuf_len));
+            ssize_t n = client_read(client, client->hbuf + client->hbuf_len, (size_t)(HDR_BUF_SIZE - client->hbuf_len));
             if (n < 0) {
                 if (errno == EAGAIN) return;
                 close_client(w, client);
@@ -603,6 +869,7 @@ void handle_client_readable(Worker *w, ClientConn *client) {
             }
             client->hbuf_len += (int)n;
         }
+        if (client_trim_hbuf(w, client, total_cmd_len) < 0) return;
     }
 
     /* ── CLIENT INFO bookkeeping: this is the single dispatch point shared by
@@ -690,6 +957,11 @@ void handle_client_readable(Worker *w, ClientConn *client) {
             const char *obj_key;
             int obj_keylen;
             if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &obj_key, &obj_keylen)) {
+                /* Whole command already here: the key is missing, not late. */
+                if (client->hbuf_len >= total_cmd_len) {
+                    client_send_error(w, client, "missing key");
+                    client->hbuf_len = 0;
+                }
                 return;
             }
             keylen = obj_keylen < 511 ? obj_keylen : 511;
@@ -723,6 +995,11 @@ void handle_client_readable(Worker *w, ClientConn *client) {
             const char *xg_key;
             int xg_keylen;
             if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &xg_key, &xg_keylen)) {
+                /* Whole command already here: the key is missing, not late. */
+                if (client->hbuf_len >= total_cmd_len) {
+                    client_send_error(w, client, "missing key");
+                    client->hbuf_len = 0;
+                }
                 return;
             }
             keylen = xg_keylen < 511 ? xg_keylen : 511;
@@ -735,6 +1012,11 @@ void handle_client_readable(Worker *w, ClientConn *client) {
                 const char *mem_key;
                 int mem_keylen;
                 if (!resp_get_nth_arg(client->hbuf, client->hbuf_len, 2, &mem_key, &mem_keylen)) {
+                    /* Whole command already here: the key is missing, not late. */
+                    if (client->hbuf_len >= total_cmd_len) {
+                        client_send_error(w, client, "missing key");
+                        client->hbuf_len = 0;
+                    }
                     return;
                 }
                 keylen = mem_keylen < 511 ? mem_keylen : 511;

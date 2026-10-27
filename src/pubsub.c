@@ -40,6 +40,61 @@ static int parse_sub_count_from_msg(const char *buf, int len) {
     return atoi(buf + off + 1);
 }
 
+/* Queue data[0..len) behind whatever is still unsent on this sub_conn and
+ * arm it for writing. Returns -1 on allocation failure. */
+static int sub_conn_append(Worker *w, PoolConn *conn, const char *data, int len) {
+    if (conn->wbuf_off > 0) {
+        int remaining = conn->wbuf_len - conn->wbuf_off;
+        if (remaining > 0) memmove(conn->wbuf, conn->wbuf + conn->wbuf_off, (size_t)remaining);
+        conn->wbuf_len = remaining > 0 ? remaining : 0;
+        conn->wbuf_off = 0;
+    }
+
+    if (conn->wbuf_cap < conn->wbuf_len + len) {
+        int nc = conn->wbuf_len + len + 4096;
+        char *tmp = realloc(conn->wbuf, (size_t)nc);
+        if (!tmp) return -1;
+        conn->wbuf = tmp;
+        conn->wbuf_cap = nc;
+    }
+    memcpy(conn->wbuf + conn->wbuf_len, data, (size_t)len);
+    conn->wbuf_len += len;
+
+    fd_watch(w, conn->fd, EL_WRITABLE);
+    return 0;
+}
+
+/* ── unsubscribe fence ──────────────────────────────────────────────────
+ * An (P|S)UNSUBSCRIBE may or may not take the client out of subscribe mode,
+ * and that decides where the next command must go -- so, like predixy, the
+ * client's next pipelined command isn't read until it has completed. Its
+ * confirmations can't be counted up front (one per channel, or per current
+ * subscription when given none), so a PING of our own is sent right behind
+ * it instead: by FIFO, once its echo comes back every confirmation has been
+ * relayed and in_subscribe is final. The echo is swallowed, the sub_conn is
+ * released if the count reached 0, and client input resumes. */
+#define SUB_FENCE_TOKEN     "valkey-proxy-unsubscribe-fence"
+#define SUB_FENCE_TOKEN_LEN ((int)sizeof(SUB_FENCE_TOKEN) - 1)
+
+static int sub_conn_send_fence(Worker *w, PoolConn *conn) {
+    char cmd[96];
+    int len = snprintf(cmd, sizeof(cmd), "*2\r\n$4\r\nPING\r\n$%d\r\n%s\r\n", SUB_FENCE_TOKEN_LEN, SUB_FENCE_TOKEN);
+    /* An in-flight RESP3 upgrade owns wbuf; queue behind it instead (see
+     * handle_pubsub_cmd()). */
+    if (conn->resp3_handshake) return resp3_defer_append(conn, cmd, len);
+    return sub_conn_append(w, conn, cmd, len);
+}
+
+/* The fence's reply: a bulk string once the backend has left subscribe
+ * mode, or ["pong", token] (array / RESP3 push) while still subscribed. */
+static int is_sub_fence_reply(const char *buf, int len) {
+    char exp[96];
+    int n = snprintf(exp, sizeof(exp), "$%d\r\n%s\r\n", SUB_FENCE_TOKEN_LEN, SUB_FENCE_TOKEN);
+    if (len == n && !memcmp(buf, exp, (size_t)n)) return 1;
+    n = snprintf(exp, sizeof(exp), "*2\r\n$4\r\npong\r\n$%d\r\n%s\r\n", SUB_FENCE_TOKEN_LEN, SUB_FENCE_TOKEN);
+    return len == n && (buf[0] == '*' || buf[0] == '>') && !memcmp(buf + 1, exp + 1, (size_t)n - 1);
+}
+
 void handle_sub_conn_readable(Worker *w, PoolConn *conn) {
     ClientConn *cl = conn->waiting_client;
     if (!cl) {
@@ -79,12 +134,38 @@ void handle_sub_conn_readable(Worker *w, PoolConn *conn) {
         conn->rbuf_len += (int)n;
     }
 
-    int off = 0;
+    int off = 0, resume_input = 0;
     while (off < conn->rbuf_len) {
         int rlen = resp_response_len(conn->rbuf + off, conn->rbuf_len - off);
         if (rlen == 0) break;
         if (rlen < 0) {
             close_client(w, cl);
+            return;
+        }
+
+        if (cl->sub_fence_pending && is_sub_fence_reply(conn->rbuf + off, rlen)) {
+            off += rlen;
+            cl->sub_fence_pending = 0;
+            if (cl->in_subscribe) {
+                resume_input = 1;
+                continue;
+            }
+
+            /* Nothing of the client's can be queued behind the fence. */
+            conn->rbuf_len = 0;
+            conn->waiting_client = NULL;
+            cl->sub_conn = NULL;
+            pool_destroy_conn(w, conn);
+
+            /* Input was held while draining (see client_wants_input() in
+             * client.c); either path below resumes it. */
+            if (cl->wbuf_len > 0) {
+                cl->state = CS_WRITING_RESP;
+                fd_watch(w, cl->fd, EL_WRITABLE);
+            } else {
+                cl->state = CS_READING_HDR;
+                fd_watch(w, cl->fd, EL_READABLE);
+            }
             return;
         }
 
@@ -136,20 +217,9 @@ void handle_sub_conn_readable(Worker *w, PoolConn *conn) {
         int sub_count = parse_sub_count_from_msg(conn->rbuf + off, rlen);
         off += rlen;
 
-        if (sub_count == 0) {
-            int remaining = conn->rbuf_len - off;
-            if (remaining > 0) memmove(conn->rbuf, conn->rbuf + off, (size_t)remaining);
-            conn->rbuf_len = remaining;
-
-            conn->waiting_client = NULL;
-            cl->sub_conn = NULL;
-            cl->in_subscribe = 0;
-            pool_destroy_conn(w, conn);
-
-            cl->state = CS_WRITING_RESP;
-            fd_watch(w, cl->fd, EL_WRITABLE);
-            return;
-        }
+        /* The sub_conn itself is released once the fence that always
+         * follows an unsubscribe comes back (see above). */
+        if (sub_count == 0) cl->in_subscribe = 0;
     }
 
     if (off > 0) {
@@ -161,6 +231,8 @@ void handle_sub_conn_readable(Worker *w, PoolConn *conn) {
     if (cl->wbuf_len > 0) {
         cl->state = CS_WRITING_RESP;
         fd_watch(w, cl->fd, EL_WRITABLE);
+    } else if (resume_input) {
+        fd_watch(w, cl->fd, EL_READABLE);
     }
 }
 
@@ -279,33 +351,18 @@ void handle_pubsub_cmd(Worker *w, ClientConn *client, int cmdlen, const char *cm
             close_client(w, client);
             return;
         }
-        fd_watch(w, client->fd, EL_READABLE);
-        client->hbuf_len = 0;
-        client->state = CS_READING_HDR;
+    } else if (sub_conn_append(w, conn, client->hbuf, cmdlen) < 0) {
+        close_client(w, client);
         return;
     }
 
-    if (conn->wbuf_off > 0) {
-        int remaining = conn->wbuf_len - conn->wbuf_off;
-        if (remaining > 0) memmove(conn->wbuf, conn->wbuf + conn->wbuf_off, (size_t)remaining);
-        conn->wbuf_len = remaining > 0 ? remaining : 0;
-        conn->wbuf_off = 0;
-    }
-
-    if (conn->wbuf_cap < conn->wbuf_len + cmdlen) {
-        int nc = conn->wbuf_len + cmdlen + 4096;
-        char *tmp = realloc(conn->wbuf, (size_t)nc);
-        if (!tmp) {
+    if (!strcmp(cmd, "UNSUBSCRIBE") || !strcmp(cmd, "PUNSUBSCRIBE") || !strcmp(cmd, "SUNSUBSCRIBE")) {
+        if (sub_conn_send_fence(w, conn) < 0) {
             close_client(w, client);
             return;
         }
-        conn->wbuf = tmp;
-        conn->wbuf_cap = nc;
+        client->sub_fence_pending = 1;
     }
-    memcpy(conn->wbuf + conn->wbuf_len, client->hbuf, (size_t)cmdlen);
-    conn->wbuf_len += cmdlen;
-
-    fd_watch(w, conn->fd, EL_WRITABLE);
     fd_watch(w, client->fd, EL_READABLE);
 
     client->hbuf_len = 0;

@@ -172,6 +172,13 @@ struct ClientConn {
     ClientState state;
     char hbuf[HDR_BUF_SIZE];
     int hbuf_len;
+    /* Pipelined input already read off the socket but belonging to commands
+     * after the current one: qbuf[qbuf_off..qbuf_len). client_read() drains
+     * it before touching the socket again, client_unread() pushes bytes back
+     * onto its front -- so hbuf/pbuf only ever hold the current command. */
+    char *qbuf;
+    int qbuf_off, qbuf_len, qbuf_cap;
+    int input_queued; /* 1 = listed in the owning Worker's input_ready[] */
     int node_idx;
     int total_cmd_len;
     long long cmd_remaining;
@@ -184,6 +191,9 @@ struct ClientConn {
     int using_pbuf;
     FanoutCtx *fanout_ctx;
     PoolConn *sub_conn;
+    /* 1 = an unsubscribe's fence PING is in flight on sub_conn (see
+     * pubsub.c): client input is held until it comes back. */
+    int sub_fence_pending;
     /* ── CLIENT ID / GETNAME / SETNAME (see handle_client_cmd in fanout.c) ── */
     long long id;
     char name[64];
@@ -300,6 +310,12 @@ typedef struct {
      * published, instead of waiting for it to next wake up on its own via
      * client/backend traffic. -1 until worker_thread() sets it up. */
     int wake_r, wake_w;
+    /* Clients that went back to waiting for input while qbuf still holds
+     * pipelined commands -- no epoll event will ever fire for bytes that are
+     * already in user space, so the worker loop runs these itself (see
+     * client_run_buffered_input()). Sized to g_config.max_connection. */
+    ClientConn **input_ready;
+    int input_ready_len;
 } Worker;
 
 typedef struct {
@@ -362,10 +378,16 @@ extern SSL_CTX *g_ssl_ctx;
 #endif
 
 /* ── event mask helpers ─────────────────────────────────────────────── */
+void client_queue_buffered_input(Worker *w, ClientConn *client);
 static inline void fd_watch(Worker *w, int fd, int events) {
     if (fd < 0 || fd >= g_config.max_connection) return;
     w->fd_mask[fd] |= (uint8_t)events;
     el_add(w->el, fd, w->fd_mask[fd]);
+    /* Every path that finishes a client command hands the client back to
+     * input via fd_watch(EL_READABLE) -- the one choke point where pipelined
+     * commands still sitting in qbuf can be picked up again. */
+    if ((events & EL_READABLE) && w->client_map[fd] && w->client_map[fd]->qbuf_len > 0)
+        client_queue_buffered_input(w, w->client_map[fd]);
 }
 static inline void fd_unwatch(Worker *w, int fd, int events) {
     if (fd < 0 || fd >= g_config.max_connection) return;
@@ -485,6 +507,7 @@ void handle_backend_writable(Worker *w, PoolConn *conn);
 void handle_backend_readable(Worker *w, PoolConn *conn);
 void handle_client_writable(Worker *w, ClientConn *client);
 void handle_client_readable(Worker *w, ClientConn *client);
+void client_run_buffered_input(Worker *w);
 
 /* ── fan-out handlers ───────────────────────────────────────────────── */
 int topo_first_master(Worker *w);
