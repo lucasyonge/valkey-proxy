@@ -1,6 +1,6 @@
 #include "proxy.h"
 
-const char *POOL_NAME[POOL_TYPE_COUNT] = {"normal", "blocking", "subscription", "transaction", "acl"};
+const char *POOL_NAME[POOL_TYPE_COUNT] = {"normal", "blocking", "subscription", "transaction", "acl", "shared"};
 
 const char *CMD_CLASS_NAME[] = {"SINGLE_KEY", "MULTI_KEY", "NO_KEY", "BLOCKING", "PUBSUB", "ACL"};
 

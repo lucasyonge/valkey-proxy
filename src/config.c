@@ -1,6 +1,8 @@
 #include "proxy.h"
 
 #define DEFAULT_BACKEND_CONNECT_TIMEOUT_MS 1000
+#define DEFAULT_SHARED_CONNECTION_PER_NODE 4
+#define DEFAULT_MAX_PIPELINE_INFLIGHT      256
 
 /* ── config parsing ─────────────────────────────────────────────────── */
 /* For the reported_* settings, where a value cut short at a space or at
@@ -27,6 +29,9 @@ void parse_conf(const char *path) {
     g_config.cluster_refresh_interval_ms = 0; /* 0 = periodic refresh disabled */
     g_config.cluster_node_fail_grace_ms = 10000;
     g_config.backend_connect_timeout_ms = DEFAULT_BACKEND_CONNECT_TIMEOUT_MS;
+    g_config.backend_multiplexing = 1;
+    g_config.shared_connection_per_node = DEFAULT_SHARED_CONNECTION_PER_NODE;
+    g_config.max_pipeline_inflight = DEFAULT_MAX_PIPELINE_INFLIGHT;
     char line[512], key[64], val[448];
     while (fgets(line, sizeof(line), f)) {
         if (line[0] == '#' || line[0] == '\n') continue;
@@ -61,6 +66,12 @@ void parse_conf(const char *path) {
             g_config.cluster_node_fail_grace_ms = atoi(val);
         else if (!strcmp(key, "backend_connect_timeout_ms"))
             g_config.backend_connect_timeout_ms = atoi(val);
+        else if (!strcmp(key, "backend_multiplexing"))
+            g_config.backend_multiplexing = (!strcmp(val, "yes"));
+        else if (!strcmp(key, "shared_connection_per_node"))
+            g_config.shared_connection_per_node = atoi(val);
+        else if (!strcmp(key, "max_pipeline_inflight"))
+            g_config.max_pipeline_inflight = atoi(val);
         else if (!strcmp(key, "min_normal_connection"))
             g_pool_min[POOL_NORMAL] = atoi(val);
         else if (!strcmp(key, "max_normal_connection"))
@@ -102,6 +113,20 @@ void parse_conf(const char *path) {
                 g_config.backend_connect_timeout_ms, DEFAULT_BACKEND_CONNECT_TIMEOUT_MS);
         g_config.backend_connect_timeout_ms = DEFAULT_BACKEND_CONNECT_TIMEOUT_MS;
     }
+    if (g_config.shared_connection_per_node <= 0) {
+        fprintf(stderr, "Warning: shared_connection_per_node must be positive (got %d); falling back to default %d\n",
+                g_config.shared_connection_per_node, DEFAULT_SHARED_CONNECTION_PER_NODE);
+        g_config.shared_connection_per_node = DEFAULT_SHARED_CONNECTION_PER_NODE;
+    }
+    if (g_config.max_pipeline_inflight <= 0) {
+        fprintf(stderr, "Warning: max_pipeline_inflight must be positive (got %d); falling back to default %d\n",
+                g_config.max_pipeline_inflight, DEFAULT_MAX_PIPELINE_INFLIGHT);
+        g_config.max_pipeline_inflight = DEFAULT_MAX_PIPELINE_INFLIGHT;
+    }
+    /* Shared connections are picked by slot % count, so the pool must hold
+     * exactly this many at all times; with multiplexing off it's unused. */
+    g_pool_min[POOL_SHARED] = g_pool_max[POOL_SHARED] =
+        g_config.backend_multiplexing ? g_config.shared_connection_per_node : 0;
     /* Clamp here, before any thread starts, so everything that walks
      * g_workers (main(), the refresh thread, PROXY POOLS) agrees on how many
      * workers there are. */

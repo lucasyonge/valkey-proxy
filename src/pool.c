@@ -48,7 +48,7 @@ static int send_select(int fd, int db) {
     return (resp[0] == '+') ? 0 : -1;
 }
 
-static int pool_new_fd(Worker *w, ConnPool *p) {
+int pool_new_fd(Worker *w, ConnPool *p) {
     const ClusterNode *node = &w->topo.nodes[p->node_idx];
     /* Short, configurable timeout (not tcp_connect()'s fixed 5s) -- this
      * runs on the worker thread, so a node that's momentarily unreachable
@@ -157,6 +157,10 @@ void pool_init(Worker *w, ConnPool *p, PoolType type, int node_idx, int db) {
     /* p->stats needs no reset: pool_init() only ever runs on a NodePools
      * fresh from db_group_create()'s calloc (gen == -1), so it's still all
      * zeroes. Counters then keep counting across later topology changes. */
+    if (type == POOL_SHARED) {
+        mux_pool_init(w, p);
+        return;
+    }
     atomic_store_explicit(&p->stats.live, 1, memory_order_release);
     int want = g_pool_min[type];
     if (want == 0) {
@@ -518,6 +522,12 @@ void worker_sync_topology(Worker *w) {
                        still_owns_slots ? "" : " (no longer owns any slot, not reconnecting)");
                 for (int pt = 0; pt < POOL_TYPE_COUNT; pt++) {
                     ConnPool *p = &np->pools[pt];
+                    if (pt == POOL_SHARED) {
+                        /* Every request on these is in flight against the
+                         * old node: fail them, and reconnect in place. */
+                        mux_pool_reset(w, p, still_owns_slots, "backend node changed");
+                        continue;
+                    }
                     /* Iterate back-to-front: pool_destroy_conn compacts the
                      * array by swapping the last live element into the
                      * removed slot, so walking backwards visits every
