@@ -12,7 +12,7 @@ endif
 POOL_TARGET = valkey-proxy
 POOL_SRCS   = src/valkey-proxy.c src/config.c src/cluster.c src/resp.c \
               src/pool.c src/cmd.c src/fanout.c src/pubsub.c src/acl.c src/client.c \
-              src/hello.c src/event_loop.c
+              src/hello.c src/event_loop.c src/metrics.c src/info.c
 BUILD_DIR   = build
 POOL_OBJS   = $(POOL_SRCS:%.c=$(BUILD_DIR)/%.o)
 
@@ -42,7 +42,7 @@ TEST_CFLAGS = -O0 -g -Wall -Wextra -Itest -pthread
 
 TEST_SRCS = test/run-test.c test/acl/test_acl.c test/acl/acl_fixture.c test/bitmap/test_bitmap.c \
             test/blocking/test_blocking.c \
-            test/general/test_general.c test/hash/test_hash.c \
+            test/general/test_general.c test/general/test_reported.c test/hash/test_hash.c \
             test/geospatial/test_geospatial.c \
             test/hyperloglog/test_hyperloglog.c \
             test/list/test_list.c \

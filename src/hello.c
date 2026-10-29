@@ -109,20 +109,25 @@ static int hello_put_bulk(char *buf, int off, int cap, const char *s, int slen) 
 }
 
 /* Builds and sends this client's HELLO reply entirely locally -- no backend
- * round-trip. server/version/mode/role/modules are fixed constants (real
- * value only matters for client-library display, not protocol correctness;
- * see the plan's "边界情况" section for why this deliberately skips an INFO/
- * MODULE LIST fetch). Shape depends on client->resp: a RESP3 client gets a
- * 7-pair map (%7), a RESP2 client gets the same 14 elements flattened into
- * a plain array (*14) -- matching how real Valkey answers HELLO on however
- * that connection ends up speaking after the switch. */
+ * round-trip. server and mode are fixed. version, role and modules are what
+ * the backends report (version and modules probed at topology discovery),
+ * unless the reported_* config overrides them (see src/info.c). Shape
+ * depends on client->resp: a RESP3 client gets a 7-pair map (%7), a RESP2
+ * client gets the same 14 elements flattened into a plain array (*14) --
+ * matching how real Valkey answers HELLO on however that connection ends
+ * up speaking after the switch. */
 static void build_and_send_hello_reply(Worker *w, ClientConn *client) {
-    static const char *SERVER = "valkey";
-    static const char *VERSION = "7.4.0";
-    static const char *MODE = "cluster";
-    static const char *ROLE = "master";
+    static const char *SERVER = "valkey-proxy";
+    static const char *MODE = "standalone";
+    const char *ROLE = info_reported_role();
+    char valkey_version[32], redis_version[32];
+    info_get_reported_versions(valkey_version, sizeof(valkey_version), redis_version, sizeof(redis_version));
+    const char *VERSION = valkey_version[0] ? valkey_version : redis_version[0] ? redis_version : "7.4.0";
+    BackendModule mods[MAX_BACKEND_MODULES];
+    int nmods = info_get_reported_modules(mods, MAX_BACKEND_MODULES);
 
-    char buf[512];
+    /* Sized for MAX_BACKEND_MODULES entries with the longest names. */
+    char buf[8192];
     int off = snprintf(buf, sizeof(buf), client->resp == 3 ? "%%7\r\n" : "*14\r\n");
 
     off = hello_put_bulk(buf, off, (int)sizeof(buf), "server", 6);
@@ -138,7 +143,21 @@ static void build_and_send_hello_reply(Worker *w, ClientConn *client) {
     off = hello_put_bulk(buf, off, (int)sizeof(buf), "role", 4);
     off = hello_put_bulk(buf, off, (int)sizeof(buf), ROLE, (int)strlen(ROLE));
     off = hello_put_bulk(buf, off, (int)sizeof(buf), "modules", 7);
-    off += snprintf(buf + off, sizeof(buf) - (size_t)off, "*0\r\n");
+    /* Each module is a name/ver/path/args map, as Valkey sends it. The
+     * backends' module paths mean nothing to a proxy client, so path is
+     * empty and args is an empty array. */
+    off += snprintf(buf + off, sizeof(buf) - (size_t)off, "*%d\r\n", nmods);
+    for (int i = 0; i < nmods; i++) {
+        off += snprintf(buf + off, sizeof(buf) - (size_t)off, client->resp == 3 ? "%%4\r\n" : "*8\r\n");
+        off = hello_put_bulk(buf, off, (int)sizeof(buf), "name", 4);
+        off = hello_put_bulk(buf, off, (int)sizeof(buf), mods[i].name, (int)strlen(mods[i].name));
+        off = hello_put_bulk(buf, off, (int)sizeof(buf), "ver", 3);
+        off += snprintf(buf + off, sizeof(buf) - (size_t)off, ":%lld\r\n", mods[i].ver);
+        off = hello_put_bulk(buf, off, (int)sizeof(buf), "path", 4);
+        off = hello_put_bulk(buf, off, (int)sizeof(buf), "", 0);
+        off = hello_put_bulk(buf, off, (int)sizeof(buf), "args", 4);
+        off += snprintf(buf + off, sizeof(buf) - (size_t)off, "*0\r\n");
+    }
 
     if (client->wbuf_cap < off) {
         char *tmp = realloc(client->wbuf, (size_t)off);

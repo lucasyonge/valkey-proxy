@@ -1,6 +1,18 @@
 #include "proxy.h"
 
+#define DEFAULT_BACKEND_CONNECT_TIMEOUT_MS 1000
+
 /* ── config parsing ─────────────────────────────────────────────────── */
+/* For the reported_* settings, where a value cut short at a space or at
+ * the field size would silently report something else. */
+static void set_reported(const char *key, const char *line, const char *val, char *dst, size_t cap) {
+    char extra[2];
+    if (sscanf(line, "%*s %*s %1s", extra) == 1)
+        fprintf(stderr, "Warning: %s takes one value without spaces; ignoring everything after \"%s\"\n", key, val);
+    if (strlen(val) >= cap) fprintf(stderr, "Warning: %s is longer than %zu characters; truncating\n", key, cap - 1);
+    snprintf(dst, cap, "%.*s", (int)(cap - 1), val);
+}
+
 void parse_conf(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) {
@@ -14,7 +26,7 @@ void parse_conf(const char *path) {
     g_config.max_connection = DEFAULT_MAX_CONNECTIONS;
     g_config.cluster_refresh_interval_ms = 0; /* 0 = periodic refresh disabled */
     g_config.cluster_node_fail_grace_ms = 10000;
-    g_config.backend_connect_timeout_ms = 1000;
+    g_config.backend_connect_timeout_ms = DEFAULT_BACKEND_CONNECT_TIMEOUT_MS;
     char line[512], key[64], val[448];
     while (fgets(line, sizeof(line), f)) {
         if (line[0] == '#' || line[0] == '\n') continue;
@@ -69,6 +81,12 @@ void parse_conf(const char *path) {
             g_pool_min[POOL_ACL] = atoi(val);
         else if (!strcmp(key, "max_acl_connection"))
             g_pool_max[POOL_ACL] = atoi(val);
+        else if (!strcmp(key, "reported_version"))
+            set_reported(key, line, val, g_config.reported_version, sizeof(g_config.reported_version));
+        else if (!strcmp(key, "reported_role"))
+            set_reported(key, line, val, g_config.reported_role, sizeof(g_config.reported_role));
+        else if (!strcmp(key, "reported_modules"))
+            set_reported(key, line, val, g_config.reported_modules, sizeof(g_config.reported_modules));
     }
     fclose(f);
 
@@ -77,6 +95,18 @@ void parse_conf(const char *path) {
                 g_config.max_connection, DEFAULT_MAX_CONNECTIONS);
         g_config.max_connection = DEFAULT_MAX_CONNECTIONS;
     }
+    /* 0 would make every backend connect time out at once, and as an
+     * SO_RCVTIMEO it means no timeout at all. */
+    if (g_config.backend_connect_timeout_ms <= 0) {
+        fprintf(stderr, "Warning: backend_connect_timeout_ms must be positive (got %d); falling back to default %d\n",
+                g_config.backend_connect_timeout_ms, DEFAULT_BACKEND_CONNECT_TIMEOUT_MS);
+        g_config.backend_connect_timeout_ms = DEFAULT_BACKEND_CONNECT_TIMEOUT_MS;
+    }
+    /* Clamp here, before any thread starts, so everything that walks
+     * g_workers (main(), the refresh thread, PROXY POOLS) agrees on how many
+     * workers there are. */
+    if (g_config.worker_thread_no < 1) g_config.worker_thread_no = 1;
+    if (g_config.worker_thread_no > MAX_WORKERS) g_config.worker_thread_no = MAX_WORKERS;
 }
 
 /* ── TCP / Unix helpers ─────────────────────────────────────────────── */

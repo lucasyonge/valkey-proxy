@@ -1,22 +1,28 @@
 #include "proxy.h"
 #include <time.h>
+#include <sys/time.h>
 
-/* ── recv_bulk (cluster discovery only) ─────────────────────────────── */
+/* ── recv_bulk (cluster discovery and version probe) ────────────────── */
+/* NULL with *out_len 0 on allocation failure: this also runs on the
+ * refresh thread, where one failed allocation shouldn't end the process. */
 static char *recv_bulk(int fd, size_t *out_len) {
     size_t cap = 65536, len = 0;
+    *out_len = 0;
     char *buf = malloc(cap);
     if (!buf) {
         perror("malloc");
-        exit(1);
+        return NULL;
     }
     for (;;) {
         if (len + 1 >= cap) {
             cap *= 2;
-            buf = realloc(buf, cap);
-            if (!buf) {
+            char *tmp = realloc(buf, cap);
+            if (!tmp) {
                 perror("realloc");
-                exit(1);
+                free(buf);
+                return NULL;
             }
+            buf = tmp;
         }
         ssize_t n = read(fd, buf + len, cap - len - 1);
         if (n <= 0) break;
@@ -34,6 +40,128 @@ static char *recv_bulk(int fd, size_t *out_len) {
     }
     *out_len = len;
     return buf;
+}
+
+/* ── backend version probe ─────────────────────────────────────────── */
+/* Compares dotted versions numerically, so "8.10.0" > "8.9.1". */
+static int version_cmp(const char *a, const char *b) {
+    for (int i = 0; i < 3; i++) {
+        char *ea, *eb;
+        long x = strtol(a, &ea, 10), y = strtol(b, &eb, 10);
+        if (x != y) return x < y ? -1 : 1;
+        a = *ea == '.' ? ea + 1 : ea;
+        b = *eb == '.' ? eb + 1 : eb;
+    }
+    return 0;
+}
+
+/* Copies the value of an INFO "<field>:<value>" line into out, or "" if
+ * info has no such line. */
+static void info_field(const char *info, const char *field, char *out, size_t cap) {
+    char key[64];
+    snprintf(key, sizeof(key), "\n%s:", field);
+    out[0] = '\0';
+    const char *p = strstr(info, key);
+    if (!p) return;
+    p += strlen(key);
+    size_t n = strcspn(p, "\r\n");
+    snprintf(out, cap, "%.*s", (int)(n < cap ? n : cap - 1), p);
+}
+
+/* Parses the "module:name=<name>,ver=<ver>,..." lines of an INFO modules
+ * section into out. Returns how many were found. */
+static int info_modules(const char *info, BackendModule *out, int cap) {
+    int n = 0;
+    for (const char *p = strstr(info, "\nmodule:name="); p && n < cap; p = strstr(p + 1, "\nmodule:name=")) {
+        p += strlen("\nmodule:name=");
+        size_t len = strcspn(p, ",\r\n");
+        snprintf(out[n].name, sizeof(out[n].name), "%.*s",
+                 (int)(len < sizeof(out[n].name) ? len : sizeof(out[n].name) - 1), p);
+        const char *ver = strstr(p, ",ver=");
+        const char *eol = p + strcspn(p, "\r\n");
+        out[n].ver = ver && ver < eol ? strtoll(ver + 5, NULL, 10) : 0;
+        n++;
+    }
+    return n;
+}
+
+/* 1 if resp holds a whole bulk string. recv_bulk() returns whatever arrived
+ * before SO_RCVTIMEO, and a cut-off INFO would drop modules and fields. */
+static int bulk_complete(const char *resp, size_t len) {
+    if (len == 0 || resp[0] != '$') return 0;
+    const char *eol = memchr(resp, '\n', len);
+    if (!eol) return 0;
+    long bl = strtol(resp + 1, NULL, 10);
+    return bl >= 0 && len >= (size_t)(eol - resp) + 1 + (size_t)bl + 2;
+}
+
+/* Keeps only the modules in mods that are also in other, with the lower
+ * of the two versions. Returns the new count. */
+static int intersect_modules(BackendModule *mods, int n, const BackendModule *other, int nother) {
+    int kept = 0;
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < nother; j++)
+            if (!strcmp(mods[i].name, other[j].name)) {
+                mods[kept] = mods[i];
+                if (other[j].ver < mods[kept].ver) mods[kept].ver = other[j].ver;
+                kept++;
+                break;
+            }
+    return kept;
+}
+
+/* Records the lowest valkey_version and redis_version across nodes, and
+ * the modules loaded on every node, via a blocking INFO server modules to
+ * each, for INFO and HELLO to report. The oldest shard bounds what clients
+ * can rely on, e.g. during a rolling upgrade, and a module only some
+ * shards have would fail for keys on the others. Only nodes that own slots
+ * are asked: a dead master stays in nodes[] until its index is reused, and
+ * each one would cost a connect timeout on the refresh thread. The previous
+ * values are kept if no node answers. Runs on every topology publish, and
+ * every BACKEND_PROBE_INTERVAL_SEC otherwise, to catch in-place upgrades
+ * and module loads that don't change the topology. */
+#define BACKEND_PROBE_INTERVAL_SEC 60
+static time_t last_probe;
+
+static void probe_backend_versions(const ClusterNode *nodes, int count, const int *has_slots) {
+    last_probe = time(NULL);
+    static const char cmd[] = "*3\r\n$4\r\nINFO\r\n$6\r\nserver\r\n$7\r\nmodules\r\n";
+    int ms = g_config.backend_connect_timeout_ms;
+    char valkey_version[32] = "", redis_version[32] = "";
+    BackendModule mods[MAX_BACKEND_MODULES], node_mods[MAX_BACKEND_MODULES];
+    int nmods = 0, answered = 0;
+    for (int i = 0; i < count; i++) {
+        if (!has_slots[i]) continue;
+        int fd = tcp_connect_timeout(nodes[i].ip, nodes[i].port, ms);
+        if (fd < 0) continue;
+        struct timeval tv = {ms / 1000, (ms % 1000) * 1000};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        if (write(fd, cmd, sizeof(cmd) - 1) != (ssize_t)(sizeof(cmd) - 1)) {
+            close(fd);
+            continue;
+        }
+        size_t len;
+        char *resp = recv_bulk(fd, &len);
+        close(fd);
+        if (bulk_complete(resp, len)) {
+            char v[32], r[32];
+            info_field(resp, "valkey_version", v, sizeof(v));
+            info_field(resp, "redis_version", r, sizeof(r));
+            if (v[0] && (!valkey_version[0] || version_cmp(v, valkey_version) < 0))
+                snprintf(valkey_version, sizeof(valkey_version), "%s", v);
+            if (r[0] && (!redis_version[0] || version_cmp(r, redis_version) < 0))
+                snprintf(redis_version, sizeof(redis_version), "%s", r);
+            int n = info_modules(resp, node_mods, MAX_BACKEND_MODULES);
+            if (answered++ == 0) {
+                memcpy(mods, node_mods, sizeof(*mods) * (size_t)n);
+                nmods = n;
+            } else {
+                nmods = intersect_modules(mods, nmods, node_mods, n);
+            }
+        }
+        free(resp);
+    }
+    if (valkey_version[0] || redis_version[0]) info_set_backend_info(valkey_version, redis_version, mods, nmods);
 }
 
 /* Exact match against one comma-separated token in a CLUSTER NODES flags
@@ -202,7 +330,7 @@ void fetch_cluster_nodes(void) {
     char *resp = recv_bulk(fd, &len);
     close(fd);
     if (len == 0 || resp[0] == '-') {
-        fprintf(stderr, "CLUSTER NODES failed: %.*s\n", (int)len, resp);
+        fprintf(stderr, "CLUSTER NODES failed: %.*s\n", (int)len, resp ? resp : "");
         free(resp);
         exit(1);
     }
@@ -231,6 +359,7 @@ void fetch_cluster_nodes(void) {
         printf("  [%d] %s:%d  flags=%-24s %s\n", i, g_nodes[i].ip, g_nodes[i].port, g_nodes[i].flags,
                g_nodes[i].is_master ? "(master)" : "(replica)");
     printf("\n");
+    probe_backend_versions(g_nodes, g_node_count, g_node_has_slots);
 }
 
 /* ── periodic topology refresh ──────────────────────────────────────── */
@@ -263,9 +392,7 @@ static int owner_idx_seeded = 0;
  * momentarily full (a wake is already pending for it) is simply skipped --
  * either way it will still pick up the new topology, just not instantly. */
 static void wake_all_workers(void) {
-    int nw = g_config.worker_thread_no;
-    if (nw < 1) nw = 1;
-    if (nw > MAX_WORKERS) nw = MAX_WORKERS;
+    int nw = g_config.worker_thread_no; /* clamped to [1, MAX_WORKERS] by parse_conf() */
     for (int i = 0; i < nw; i++) {
         int fd = g_workers[i].wake_w;
         if (fd < 0) continue;
@@ -413,7 +540,10 @@ static void reconcile_and_publish(ClusterNode *dn, int dcount, int *dslot, const
             }
     if (!changed) changed = (memcmp(old_slot, slot, sizeof(slot)) != 0);
 
-    if (!changed) return;
+    if (!changed) {
+        if (difftime(now, last_probe) >= BACKEND_PROBE_INTERVAL_SEC) probe_backend_versions(nodes, count, has_slots);
+        return;
+    }
 
     /* Only printed when the master set/topology actually changed this
      * round, with whatever's new/updated called out. */
@@ -432,6 +562,7 @@ static void reconcile_and_publish(ClusterNode *dn, int dcount, int *dslot, const
     wake_all_workers();
 
     printf("[topology] refresh published: %d node(s) (was %d), source=%s:%d\n", count, old_count, src_ip, src_port);
+    probe_backend_versions(nodes, count, has_slots);
 }
 
 static void *topology_refresh_loop(void *arg) {

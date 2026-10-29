@@ -84,13 +84,14 @@ Example:
 | `-h=<host>` | proxy IP address (default `127.0.0.1`) |
 | `-p=<port>` | proxy port (default `7777`) |
 | `--cluster=<host:port>` | **optional**, any *backend* cluster node (not the proxy) — enables the tests that need a real non-default ACL user, see below |
+| `--reported=<host:port>` | **optional**, a second proxy whose config sets `reported_version 8.0.2`, `reported_role replica` and `reported_modules search:10002,json`: checks that HELLO and INFO report the overrides (without it those tests SKIP) |
 | `--bloomfilter` / `--json` / `--search` | run that module suite |
 | `--string` / `--pubsub` | run only that suite |
 
 Giving any suite option (`--bloomfilter`, `--json`, `--search`, `--string`, `--pubsub`) runs
 **only** the selected suites — the default suites are skipped. Several can be combined, e.g.
-`./run-test --bloomfilter --json -h=... -p=...`. `--cluster` is not a suite option and can be
-added to any run.
+`./run-test --bloomfilter --json -h=... -p=...`. `--cluster` and `--reported` are not suite
+options and can be added to any run.
 
 The runner prints a per-test result followed by a summary:
 

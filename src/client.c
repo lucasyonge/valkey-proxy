@@ -62,7 +62,8 @@ static int client_unread(ClientConn *client, const char *data, int len) {
 static int client_wants_input(const ClientConn *client) {
     if (client->fanout_ctx) return 0;
     if (client->sub_fence_pending) return 0;
-    return client->state == CS_READING_HDR || client->state == CS_BUFFERING_CMD || client->state == CS_STREAMING_CMD;
+    return client->state == CS_READING_HDR || client->state == CS_BUFFERING_CMD || client->state == CS_STREAMING_CMD ||
+           client->state == CS_DISCARDING_CMD;
 }
 
 static int client_has_buffered_input(const ClientConn *client) {
@@ -147,6 +148,7 @@ void close_client(Worker *w, ClientConn *client) {
     }
     acl_teardown_all(w, client);
     client_unqueue_buffered_input(w, client);
+    atomic_fetch_sub_explicit(&w->client_count, 1, memory_order_relaxed);
     free(client->wbuf);
     free(client->pbuf);
     free(client->qbuf);
@@ -681,6 +683,35 @@ static void client_process_input(Worker *w, ClientConn *client) {
      * via fd_watch(), which reports them again. */
     if (!client_wants_input(client)) return;
 
+    /* ── CS_DISCARDING_CMD: skip the rest of a rejected command ── */
+    if (client->state == CS_DISCARDING_CMD) {
+        char scratch[16384];
+        while (client->cmd_remaining > 0) {
+            ssize_t n = client_read(client, scratch, sizeof(scratch));
+            if (n < 0) {
+                if (errno == EAGAIN) return;
+                close_client(w, client);
+                return;
+            }
+            if (n == 0) {
+                close_client(w, client);
+                return;
+            }
+            /* Bytes past this command belong to the next pipelined one. */
+            if (n > client->cmd_remaining) {
+                if (client_unread(client, scratch + client->cmd_remaining, (int)(n - client->cmd_remaining)) < 0) {
+                    close_client(w, client);
+                    return;
+                }
+                n = (ssize_t)client->cmd_remaining;
+            }
+            client->cmd_remaining -= n;
+        }
+        client->state = CS_READING_HDR;
+        fd_watch(w, client->fd, EL_READABLE);
+        return;
+    }
+
     /* ── CS_STREAMING_CMD: forward cmd body bytes to backend ── */
     if (client->state == CS_STREAMING_CMD) {
         if (!client->pending_conn) {
@@ -849,11 +880,17 @@ static void client_process_input(Worker *w, ClientConn *client) {
 
     /* HELLO's AUTH/SETNAME clauses end the command, and resp_parse_header()
      * doesn't wait for the last argument's bytes -- read until the whole
-     * (always small) command is in hbuf before dispatching it. */
-    if (!strcmp(cmd, "HELLO") && client->hbuf_len < total_cmd_len) {
+     * (always small) command is in hbuf before dispatching it. PROXY and
+     * INFO parse all their arguments from hbuf too, so they need the same. */
+    if ((!strcmp(cmd, "HELLO") || !strcmp(cmd, "PROXY") || !strcmp(cmd, "INFO")) && client->hbuf_len < total_cmd_len) {
+        /* Too big to hold: reply with an error and skip the command's
+         * bytes, so the connection and anything pipelined after it survive. */
         if (total_cmd_len > HDR_BUF_SIZE) {
-            client_send_error(w, client, "command header too large");
-            close_client(w, client);
+            client_send_error(w, client, "command too large");
+            client->cmd_remaining = total_cmd_len - client->hbuf_len;
+            client->hbuf_len = 0;
+            client->state = CS_DISCARDING_CMD;
+            client_process_input(w, client);
             return;
         }
         while (client->hbuf_len < total_cmd_len) {
