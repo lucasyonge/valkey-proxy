@@ -131,6 +131,31 @@ void handle_fanout_sub_readable(Worker *w, PoolConn *conn) {
     fanout_aggregate_and_reply(w, ctx);
 }
 
+/* Same as the tail of handle_fanout_sub_readable(), for a sub sent over a
+ * shared connection (see mux.c), which owns the socket and hands over just
+ * this sub's reply: buf[0..len), or buf == NULL if the sub failed. */
+void fanout_sub_complete(Worker *w, FanoutSub *sub, const char *buf, int len, int backend_resp3) {
+    FanoutCtx *ctx = sub->ctx;
+    if (!buf) {
+        sub->error = 1;
+    } else if (backend_resp3) {
+        /* nil_array_depth=-1, as in handle_fanout_sub_readable(). */
+        if (resp3_downgrade(buf, len, -1, &sub->rbuf, &sub->rbuf_len) < 0)
+            sub->error = 1;
+        else
+            sub->rbuf_cap = sub->rbuf_len;
+    } else if ((sub->rbuf = malloc((size_t)len)) != NULL) {
+        memcpy(sub->rbuf, buf, (size_t)len);
+        sub->rbuf_len = sub->rbuf_cap = len;
+    } else {
+        sub->error = 1;
+    }
+    sub->done = 1;
+    if (sub->error) ctx->had_error = 1;
+    ctx->ndone++;
+    if (ctx->ndone == ctx->nsubs) fanout_aggregate_and_reply(w, ctx);
+}
+
 /* ── resp helpers (fanout-only) ─────────────────────────────────────── */
 static const char *resp_array_nth(const char *buf, int len, int n, int *elem_len) {
     if (len < 4 || buf[0] != '*') return NULL;
@@ -1279,8 +1304,16 @@ static char *fanout_agg_pubsub_numsub(FanoutCtx *ctx, int *out_len);
 
 void fanout_aggregate_and_reply(Worker *w, FanoutCtx *ctx) {
     ClientConn *client = ctx->client;
+    Req *req = ctx->req;
     char *resp = NULL;
     int resp_len = 0;
+
+    if (req && !client) {
+        /* Multiplexed, and the client is gone: nothing to aggregate for. */
+        fanout_ctx_free(ctx);
+        mux_req_complete(w, req, NULL, 0);
+        return;
+    }
 
     if (ctx->had_error && !ctx->nsubs) {
         const char *e = "-ERR fan-out backend error\r\n";
@@ -1355,12 +1388,28 @@ void fanout_aggregate_and_reply(Worker *w, FanoutCtx *ctx) {
     }
 
     fanout_ctx_free(ctx);
+    if (req) {
+        req->fanout = NULL;
+        mux_req_complete(w, req, resp, resp_len);
+        free(resp);
+        return;
+    }
     client->fanout_ctx = NULL;
     fanout_send_response(w, client, resp, resp_len);
 }
 
 static void fanout_dispatch_sub(Worker *w, FanoutCtx *ctx, int sub_idx, const char *cmdbuf, int cmdlen) {
     FanoutSub *sub = &ctx->subs[sub_idx];
+    if (ctx->req) {
+        /* Multiplexed: the reply comes back through fanout_sub_complete(). */
+        if (mux_send_sub(w, sub, ctx->client->db, cmdbuf, cmdlen) < 0) {
+            sub->error = 1;
+            sub->done = 1;
+            ctx->had_error = 1;
+            ctx->ndone++;
+        }
+        return;
+    }
     DbGroup *grp = db_group_get(w, ctx->client->db);
     if (!grp) {
         sub->error = 1;
@@ -1424,7 +1473,11 @@ static void fanout_dispatch_sub(Worker *w, FanoutCtx *ctx, int sub_idx, const ch
     fd_watch(w, conn->fd, EL_WRITABLE);
 }
 
-static void fanout_route_single(Worker *w, ClientConn *client, int node_idx) {
+static void fanout_route_single(Worker *w, ClientConn *client, int node_idx, int slot) {
+    if (client->mux_cmd) {
+        if (mux_send_cmd(w, client, node_idx, slot, client->pbuf, client->pbuf_len) == 0) mux_input_done(w, client);
+        return;
+    }
     client->using_pbuf = 1;
     client->node_idx = node_idx;
     DbGroup *grp = db_group_get(w, client->db);
@@ -1446,7 +1499,34 @@ static void fanout_route_single(Worker *w, ClientConn *client, int node_idx) {
     resume_client_after_conn(w, client, conn);
 }
 
+/* Hands a freshly built ctx to client: as its one fan-out in flight, or --
+ * multiplexed -- as a request of its own in the client's reply queue. -1 if
+ * the client was closed (ctx is freed). */
+static int fanout_ctx_attach(Worker *w, ClientConn *client, FanoutCtx *ctx) {
+    if (!client->mux_cmd) {
+        client->fanout_ctx = ctx;
+        return 0;
+    }
+    Req *req = mux_req_new(client);
+    if (!req) {
+        fanout_ctx_free(ctx);
+        client_send_error(w, client, "out of memory");
+        close_client(w, client);
+        return -1;
+    }
+    req->fanout = ctx;
+    ctx->req = req;
+    return 0;
+}
+
+/* After a multiplexed fan-out's subs are out: the client goes straight on
+ * to its next command (unless the fan-out's own reply closed it). */
+static void fanout_mux_dispatched(Worker *w, ClientConn *client, int fd) {
+    if (w->client_map[fd] == client && client->mux_cmd) mux_input_done(w, client);
+}
+
 void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
+    int fd = client->fd;
     int is_mset = (!strcmp(cmd, "MSET") || !strcmp(cmd, "MSETNX"));
     int is_msetex = !strcmp(cmd, "MSETEX");
     int is_json_mset = !strcmp(cmd, "JSON.MSET");
@@ -1493,7 +1573,7 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
     }
 
     if (nkeys == 1 && !is_msetex) {
-        fanout_route_single(w, client, key_node[0]);
+        fanout_route_single(w, client, key_node[0], key_slot(ap[0], al[0]));
         return;
     }
 
@@ -1501,7 +1581,7 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         int lcs_slot0 = key_slot(ap[0], al[0]);
         int lcs_slot1 = key_slot(ap[1], al[1]);
         if (lcs_slot0 == lcs_slot1) {
-            fanout_route_single(w, client, key_node[0]);
+            fanout_route_single(w, client, key_node[0], lcs_slot0);
             return;
         }
         int lcs_mode = 0;
@@ -1518,9 +1598,7 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
             }
         }
         if (lcs_mode == 2) {
-            const char *e = "-ERR LCS IDX is not supported for cross-slot keys\r\n";
-            ssize_t wr = write(client->fd, e, strlen(e));
-            (void)wr;
+            client_send_error(w, client, "LCS IDX is not supported for cross-slot keys");
             FANOUT_RESET_CLIENT(client);
             return;
         }
@@ -1536,11 +1614,12 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         ctx->ndone = 0;
         ctx->had_error = 0;
         ctx->lcs_mode = lcs_mode;
-        client->fanout_ctx = ctx;
+        if (fanout_ctx_attach(w, client, ctx) < 0) return;
         for (int i = 0; i < 2; i++) {
             ctx->subs[i].ctx = ctx;
             ctx->subs[i].sub_idx = i;
             ctx->subs[i].node_idx = key_node[i];
+            ctx->subs[i].slot = i ? lcs_slot1 : lcs_slot0;
             ctx->subs[i].conn = NULL;
             ctx->subs[i].rbuf = NULL;
             ctx->subs[i].rbuf_len = ctx->subs[i].rbuf_cap = 0;
@@ -1561,6 +1640,7 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
             free(cmdbuf);
         }
         if (ctx->ndone == ctx->nsubs) fanout_aggregate_and_reply(w, ctx);
+        fanout_mux_dispatched(w, client, fd);
         return;
     }
 
@@ -1577,11 +1657,12 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         ctx->nsubs = nkeys;
         ctx->ndone = 0;
         ctx->had_error = 0;
-        client->fanout_ctx = ctx;
+        if (fanout_ctx_attach(w, client, ctx) < 0) return;
         for (int i = 0; i < nkeys; i++) {
             ctx->subs[i].ctx = ctx;
             ctx->subs[i].sub_idx = i;
             ctx->subs[i].node_idx = key_node[i];
+            ctx->subs[i].slot = key_slot(ap[i * 3], al[i * 3]);
             ctx->subs[i].conn = NULL;
             ctx->subs[i].rbuf = NULL;
             ctx->subs[i].rbuf_len = ctx->subs[i].rbuf_cap = 0;
@@ -1605,6 +1686,7 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
             free(cmdbuf);
         }
         if (ctx->ndone == ctx->nsubs) fanout_aggregate_and_reply(w, ctx);
+        fanout_mux_dispatched(w, client, fd);
         return;
     }
 
@@ -1648,12 +1730,13 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         ctx->nsubs = nsubs;
         ctx->ndone = 0;
         ctx->had_error = 0;
-        client->fanout_ctx = ctx;
+        if (fanout_ctx_attach(w, client, ctx) < 0) return;
 
         for (int s = 0; s < nsubs; s++) {
             ctx->subs[s].ctx = ctx;
             ctx->subs[s].sub_idx = s;
             ctx->subs[s].node_idx = sub_node_val[s];
+            ctx->subs[s].slot = sub_slot_val[s];
             ctx->subs[s].conn = NULL;
             ctx->subs[s].rbuf = NULL;
             ctx->subs[s].rbuf_len = ctx->subs[s].rbuf_cap = 0;
@@ -1688,6 +1771,7 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         }
 
         if (ctx->ndone == ctx->nsubs) fanout_aggregate_and_reply(w, ctx);
+        fanout_mux_dispatched(w, client, fd);
         return;
     }
 
@@ -1729,7 +1813,7 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
     ctx->ndone = 0;
     ctx->had_error = 0;
     ctx->total_keys = nkeys;
-    client->fanout_ctx = ctx;
+    if (fanout_ctx_attach(w, client, ctx) < 0) return;
 
     {
         int pos_counter[MAX_FANOUT_SUBS];
@@ -1745,6 +1829,7 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
         ctx->subs[s].ctx = ctx;
         ctx->subs[s].sub_idx = s;
         ctx->subs[s].node_idx = sub_node_val[s];
+        ctx->subs[s].slot = sub_slot_val[s];
         ctx->subs[s].conn = NULL;
         ctx->subs[s].rbuf = NULL;
         ctx->subs[s].rbuf_len = ctx->subs[s].rbuf_cap = 0;
@@ -1781,6 +1866,7 @@ void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd) {
     }
 
     if (ctx->ndone == ctx->nsubs) fanout_aggregate_and_reply(w, ctx);
+    fanout_mux_dispatched(w, client, fd);
 }
 
 /* ── PUBSUB inspect aggregation helpers ─────────────────────────────── */

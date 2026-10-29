@@ -4,8 +4,10 @@
 #include <signal.h>
 
 /* ── global definitions ─────────────────────────────────────────────── */
-int g_pool_min[POOL_TYPE_COUNT] = {2, 2, 0, 0, 0};
-int g_pool_max[POOL_TYPE_COUNT] = {20, 10, 10, 10, 10};
+/* POOL_SHARED's entries are overwritten by shared_connection_per_node in
+ * parse_conf(): that pool is always exactly that size. */
+int g_pool_min[POOL_TYPE_COUNT] = {2, 2, 0, 0, 0, 4};
+int g_pool_max[POOL_TYPE_COUNT] = {20, 10, 10, 10, 10, 4};
 
 Config g_config;
 ClusterNode g_nodes[MAX_NODES];
@@ -281,10 +283,13 @@ int main(int argc, char **argv) {
     printf("Config: server=%s:%d  bind=%s:%d  workers=%d  default-db=%d\n", g_config.server_ip, g_config.server_port,
            g_config.bind_ip, g_config.proxy_port, g_config.worker_thread_no, g_config.db);
     printf("Pool sizes (min/max): normal=%d/%d  blocking=%d/%d"
-           "  subscription=%d/%d  transaction=%d/%d  acl=%d/%d\n\n",
+           "  subscription=%d/%d  transaction=%d/%d  acl=%d/%d\n",
            g_pool_min[POOL_NORMAL], g_pool_max[POOL_NORMAL], g_pool_min[POOL_BLOCKING], g_pool_max[POOL_BLOCKING],
            g_pool_min[POOL_SUBSCRIPTION], g_pool_max[POOL_SUBSCRIPTION], g_pool_min[POOL_TRANSACTION],
            g_pool_max[POOL_TRANSACTION], g_pool_min[POOL_ACL], g_pool_max[POOL_ACL]);
+    printf("Backend multiplexing: %s  (shared connections/node=%d  max in-flight/client=%d)\n\n",
+           g_config.backend_multiplexing ? "yes" : "no", g_config.shared_connection_per_node,
+           g_config.max_pipeline_inflight);
 
 #ifdef USE_TLS
     if (g_config.tls_enabled && init_tls() < 0) exit(1);
@@ -298,6 +303,17 @@ int main(int argc, char **argv) {
     for (int i = 0; i < MAX_WORKERS; i++) g_workers[i].wake_w = -1;
 
     fetch_cluster_nodes();
+    if (g_config.backend_multiplexing) {
+        /* Shared connections are all opened up front, for every node in
+         * every worker -- and again for each extra db a client SELECTs. */
+        long shared = (long)g_config.shared_connection_per_node * g_node_count * g_config.worker_thread_no;
+        if (shared * 2 > g_config.max_connection)
+            fprintf(stderr,
+                    "Warning: shared connections alone (%ld = %d per node x %d node(s) x %d worker(s), per db) "
+                    "take over half of max_connection (%d)\n",
+                    shared, g_config.shared_connection_per_node, g_node_count, g_config.worker_thread_no,
+                    g_config.max_connection);
+    }
     topology_start_refresh_thread();
 
     g_tcp_fd = create_tcp_listener(g_config.bind_ip, g_config.proxy_port);

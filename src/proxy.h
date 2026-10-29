@@ -46,6 +46,9 @@ typedef enum {
     POOL_SUBSCRIPTION,
     POOL_TRANSACTION,
     POOL_ACL,
+    /* Multiplexed: a fixed set of connections per node, each carrying many
+     * in-flight requests at once (see src/mux.c). */
+    POOL_SHARED,
     POOL_TYPE_COUNT
 } PoolType;
 
@@ -80,6 +83,19 @@ typedef struct ConnPool ConnPool;
 typedef struct ClientConn ClientConn;
 typedef struct FanoutSub FanoutSub;
 typedef struct FanoutCtx FanoutCtx;
+typedef struct Req Req;
+
+/* One request in flight on a POOL_SHARED connection, in the order it was
+ * written to that connection (see src/mux.c): replies come back in the same
+ * order, so the head entry always owns the next complete reply. Exactly one
+ * of req/sub is set, or neither for internal==1 (the connection's own
+ * HELLO 3 handshake). */
+typedef struct {
+    Req *req;
+    FanoutSub *sub;
+    int internal;
+    int backend_resp3; /* reply to this entry comes back as RESP3 */
+} MuxEntry;
 
 /* ── pool connection ────────────────────────────────────────────────── */
 typedef enum { CONN_AVAILABLE = 0, CONN_IN_USE = 1 } ConnState;
@@ -135,6 +151,14 @@ typedef struct {
      * now-stale readable dispatch instead of misapplying it to the new
      * owner. */
     uint32_t epoch;
+    /* POOL_SHARED only: requests written to this connection still waiting
+     * for their reply, as a ring mq[(mq_head + i) % mq_cap], i < mq_len. */
+    MuxEntry *mq;
+    int mq_head, mq_len, mq_cap;
+    /* POOL_SHARED only: fd is -1 while disconnected; no reconnect attempt
+     * before mono_us() reaches this, so a dead node costs one connect
+     * timeout per backoff period rather than one per command. */
+    uint64_t mux_retry_us;
     /* Set by worker_sync_topology() when this index's node identity has
      * moved on (failover / grace-period eviction) while this connection was
      * CONN_IN_USE. pool_release() checks this instead of tearing the
@@ -205,6 +229,22 @@ struct ClientConn {
     char *qbuf;
     int qbuf_off, qbuf_len, qbuf_cap;
     int input_queued; /* 1 = listed in the owning Worker's input_ready[] */
+    /* Multiplexed commands (see src/mux.c), oldest first: their replies are
+     * appended to wbuf strictly in this order as the head completes.
+     * req_count counts every entry, done or not. */
+    Req *req_head, *req_tail;
+    int req_count;
+    /* 1 = the command being read goes out over a POOL_SHARED connection. */
+    int mux_cmd;
+    /* 1 = a non-multiplexed command is waiting (pushed back to qbuf) for
+     * every multiplexed reply before it to be written out. */
+    int mux_barrier;
+    /* 1 = input paused at max_pipeline_inflight or with too much reply
+     * output queued; resumed once the backlog drains. */
+    int mux_throttled;
+    /* 1 = the last read() of the socket hit EAGAIN, so nothing more is
+     * waiting there until the next readable event. */
+    int read_eagain;
     int node_idx;
     int total_cmd_len;
     long long cmd_remaining;
@@ -270,6 +310,7 @@ struct FanoutSub {
     FanoutCtx *ctx;
     int sub_idx;
     int node_idx;
+    int slot; /* picks the POOL_SHARED connection when ctx->req is set */
     PoolConn *conn;
     char *rbuf;
     int rbuf_len, rbuf_cap;
@@ -277,7 +318,11 @@ struct FanoutSub {
 };
 
 struct FanoutCtx {
-    ClientConn *client;
+    ClientConn *client; /* NULL once a multiplexed request is orphaned */
+    /* Set when this fan-out is a multiplexed request: subs go out over
+     * POOL_SHARED connections and the aggregated reply completes req instead
+     * of being written to client->wbuf. client->fanout_ctx stays NULL. */
+    Req *req;
     char cmd[16];
     int nsubs, ndone, had_error;
     FanoutSub subs[MAX_FANOUT_SUBS];
@@ -364,6 +409,13 @@ typedef struct {
     char tls_cert[256], tls_key[256];
     int max_multikey_payload;
     int max_connection;
+    /* Multiplexing (see src/mux.c): single-key and fan-out commands share
+     * shared_connection_per_node connections per node instead of checking
+     * one out per command, and a client may have up to
+     * max_pipeline_inflight of them in flight at once. */
+    int backend_multiplexing;
+    int shared_connection_per_node;
+    int max_pipeline_inflight;
     int cluster_refresh_interval_ms; /* 0 = periodic refresh disabled */
     int cluster_node_fail_grace_ms;
     /* Connect timeout for backend connections made *after* startup: pool
@@ -513,6 +565,7 @@ int gb_append_fmt(GrowBuf *g, const char *fmt, ...) __attribute__((format(printf
 
 /* ── connection pool ────────────────────────────────────────────────── */
 void pool_init(Worker *w, ConnPool *p, PoolType type, int node_idx, int db);
+int pool_new_fd(Worker *w, ConnPool *p);
 PoolConn *pool_acquire_nb(Worker *w, ConnPool *p);
 void pool_enqueue_waiter(ConnPool *p, ClientConn *client);
 void pool_remove_waiter(ConnPool *p, ClientConn *client);
@@ -520,6 +573,35 @@ void pool_release(Worker *w, PoolConn *c);
 void pool_destroy_conn(Worker *w, PoolConn *c);
 DbGroup *db_group_get(Worker *w, int db);
 void worker_sync_topology(Worker *w);
+
+/* ── multiplexed requests (see src/mux.c) ───────────────────────────── */
+struct Req {
+    ClientConn *client; /* NULL = client gone; the reply is dropped on arrival */
+    Req *next;
+    int done;
+    char *reply;
+    int reply_len;
+    FanoutCtx *fanout; /* set while a fan-out request's subs are out */
+    /* Reply shaping, captured when the command was sent rather than read
+     * from the client later, since more commands may have run since. */
+    int client_resp, nil_array_depth, pair_transform;
+};
+
+void mux_pool_init(Worker *w, ConnPool *p);
+void mux_pool_reset(Worker *w, ConnPool *p, int reconnect, const char *msg);
+int client_mux_busy(const ClientConn *client);
+int client_can_mux(const ClientConn *client, const char *cmd, int total_cmd_len);
+int mux_client_output_full(const ClientConn *client);
+Req *mux_req_new(ClientConn *client);
+void mux_req_complete(Worker *w, Req *req, const char *buf, int len);
+void mux_queue_error(ClientConn *client, const char *line, int len);
+void mux_input_done(Worker *w, ClientConn *client);
+int mux_send_cmd(Worker *w, ClientConn *client, int node_idx, int slot, const char *buf, int len);
+int mux_send_sub(Worker *w, FanoutSub *sub, int db, const char *buf, int len);
+void mux_client_flush(Worker *w, ClientConn *client);
+void mux_client_release(ClientConn *client);
+void mux_conn_writable(Worker *w, PoolConn *conn);
+void mux_conn_readable(Worker *w, PoolConn *conn);
 
 /* ── command routing ────────────────────────────────────────────────── */
 PoolType cmd_get_pool_type(const char *cmd);
@@ -557,6 +639,11 @@ void client_recover_after_backend_error(Worker *w, ClientConn *client, PoolConn 
  * function to call client_send_error()+close_client() itself (caller must
  * return immediately without touching cl or conn again). */
 int deliver_backend_reply(Worker *w, ClientConn *cl, PoolConn *conn, const char *buf, int len);
+/* The RESP3->RESP2 conversion deliver_backend_reply() applies, for a reply to
+ * a command with the given cmd_resp2_nil_array_depth() and
+ * cmd_resp3_pair_transform(). 0 on success (*out malloc'd, caller frees),
+ * -1 if buf is malformed or on allocation failure. */
+int resp3_downgrade_reply(const char *buf, int len, int nil_array_depth, int pair_transform, char **out, int *out_len);
 
 /* ── backend / client event handlers ───────────────────────────────── */
 void handle_backend_writable(Worker *w, PoolConn *conn);
@@ -571,6 +658,8 @@ int topo_all_masters(Worker *w, int *out);
 void fanout_ctx_free(FanoutCtx *ctx);
 void handle_fanout_sub_readable(Worker *w, PoolConn *conn);
 void fanout_aggregate_and_reply(Worker *w, FanoutCtx *ctx);
+/* A multiplexed fan-out sub's reply (buf == NULL: it failed). */
+void fanout_sub_complete(Worker *w, FanoutSub *sub, const char *buf, int len, int backend_resp3);
 void handle_fanout_cmd(Worker *w, ClientConn *client, const char *cmd);
 void handle_nokey_cmd(Worker *w, ClientConn *client, const char *cmd, int cmdlen);
 void handle_scan_cmd(Worker *w, ClientConn *client, int cmdlen);

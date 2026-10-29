@@ -4,6 +4,12 @@
 void client_send_error(Worker *w, ClientConn *client, const char *msg) {
     char buf[256];
     int n = snprintf(buf, sizeof(buf), "-ERR %s\r\n", msg);
+    if (n >= (int)sizeof(buf)) n = (int)sizeof(buf) - 1;
+    /* Replies to earlier multiplexed commands still owed: get in line. */
+    if (client_mux_busy(client)) {
+        mux_queue_error(client, buf, n);
+        return;
+    }
     ssize_t wr = write(client->fd, buf, (size_t)n);
     (void)wr;
     (void)w;
@@ -11,6 +17,10 @@ void client_send_error(Worker *w, ClientConn *client, const char *msg) {
 
 void client_send_crossslot(ClientConn *client) {
     const char *err = "-CROSSSLOT Keys in request don't hash to the same slot\r\n";
+    if (client_mux_busy(client)) {
+        mux_queue_error(client, err, (int)strlen(err));
+        return;
+    }
     ssize_t wr = write(client->fd, err, strlen(err));
     (void)wr;
 }
@@ -27,7 +37,9 @@ static ssize_t client_read(ClientConn *client, char *buf, size_t len) {
         if (client->qbuf_off == client->qbuf_len) client->qbuf_off = client->qbuf_len = 0;
         return n;
     }
-    return read(client->fd, buf, len);
+    ssize_t n = read(client->fd, buf, len);
+    client->read_eagain = n < 0 && errno == EAGAIN;
+    return n;
 }
 
 /* Push data[0..len) back in front of whatever is still queued, so the next
@@ -59,14 +71,20 @@ static int client_unread(ClientConn *client, const char *data, int len) {
  * state (nor unwatches EL_READABLE) while its sub-requests are out, so it
  * is told apart by fanout_ctx instead; likewise an unsubscribe waiting on
  * its fence (see handle_sub_conn_readable() in pubsub.c). */
-static int client_wants_input(const ClientConn *client) {
+static int client_wants_input(ClientConn *client) {
     if (client->fanout_ctx) return 0;
     if (client->sub_fence_pending) return 0;
+    /* Waiting for earlier multiplexed replies (see mux.c). */
+    if (client->mux_barrier) return 0;
+    if (mux_client_output_full(client)) {
+        client->mux_throttled = 1;
+        return 0;
+    }
     return client->state == CS_READING_HDR || client->state == CS_BUFFERING_CMD || client->state == CS_STREAMING_CMD ||
            client->state == CS_DISCARDING_CMD;
 }
 
-static int client_has_buffered_input(const ClientConn *client) {
+static int client_has_buffered_input(ClientConn *client) {
     return client->qbuf_len > 0 && client_wants_input(client);
 }
 
@@ -147,6 +165,7 @@ void close_client(Worker *w, ClientConn *client) {
         pool_destroy_conn(w, sc);
     }
     acl_teardown_all(w, client);
+    mux_client_release(client);
     client_unqueue_buffered_input(w, client);
     atomic_fetch_sub_explicit(&w->client_count, 1, memory_order_relaxed);
     free(client->wbuf);
@@ -209,32 +228,38 @@ void client_recover_after_backend_error(Worker *w, ClientConn *client, PoolConn 
  * immediately without touching cl or conn again (both may already be
  * freed) -- this mirrors what every one of these call sites already did
  * inline before this helper existed. */
+int resp3_downgrade_reply(const char *buf, int len, int nil_array_depth, int pair_transform, char **out,
+                          int *out_len) {
+    if (resp3_downgrade(buf, len, nil_array_depth, out, out_len) < 0) return -1;
+
+    /* Marker-level downgrade is done; some commands additionally need a
+     * pure nesting-depth fixup that no type byte can reveal (see
+     * cmd_resp3_pair_transform() in cmd.c) -- both transforms verify
+     * the shape first and report "not applicable" (1) rather than force
+     * anything, so a malformed-input (-1) result here is treated the
+     * same conservative way: just keep using the already-correct
+     * marker-level output instead of failing the whole reply over it. */
+    if (pair_transform != 0) {
+        char *out2;
+        int out2_len;
+        int rc = (pair_transform == 1) ? resp3_flatten_pairs(*out, *out_len, &out2, &out2_len)
+                                       : resp3_nest_pairs(*out, *out_len, &out2, &out2_len);
+        if (rc == 0) {
+            free(*out);
+            *out = out2;
+            *out_len = out2_len;
+        }
+    }
+    return 0;
+}
+
 int deliver_backend_reply(Worker *w, ClientConn *cl, PoolConn *conn, const char *buf, int len) {
     if (cl->resp == 2 && conn->resp3) {
         char *out;
         int out_len;
-        int nil_array_depth = cmd_resp2_nil_array_depth(cl->last_cmd);
-        if (resp3_downgrade(buf, len, nil_array_depth, &out, &out_len) < 0) return -1;
-
-        /* Marker-level downgrade is done; some commands additionally need a
-         * pure nesting-depth fixup that no type byte can reveal (see
-         * cmd_resp3_pair_transform() in cmd.c) -- both transforms verify
-         * the shape first and report "not applicable" (1) rather than force
-         * anything, so a malformed-input (-1) result here is treated the
-         * same conservative way: just keep using the already-correct
-         * marker-level output instead of failing the whole reply over it. */
-        int pt = cmd_resp3_pair_transform(cl->last_cmd);
-        if (pt != 0) {
-            char *out2;
-            int out2_len;
-            int rc = (pt == 1) ? resp3_flatten_pairs(out, out_len, &out2, &out2_len)
-                               : resp3_nest_pairs(out, out_len, &out2, &out2_len);
-            if (rc == 0) {
-                free(out);
-                out = out2;
-                out_len = out2_len;
-            }
-        }
+        if (resp3_downgrade_reply(buf, len, cmd_resp2_nil_array_depth(cl->last_cmd),
+                                  cmd_resp3_pair_transform(cl->last_cmd), &out, &out_len) < 0)
+            return -1;
 
         if (cl->wbuf_cap < out_len) {
             char *tmp = realloc(cl->wbuf, (size_t)out_len);
@@ -326,6 +351,10 @@ void resume_client_after_conn(Worker *w, ClientConn *client, PoolConn *conn) {
 
 /* ── backend event handlers ─────────────────────────────────────────── */
 void handle_backend_writable(Worker *w, PoolConn *conn) {
+    if (conn->pool->type == POOL_SHARED) {
+        mux_conn_writable(w, conn);
+        return;
+    }
     if (!conn->wbuf || conn->wbuf_len == 0) {
         fd_unwatch(w, conn->fd, EL_WRITABLE);
         return;
@@ -386,6 +415,12 @@ void handle_backend_writable(Worker *w, PoolConn *conn) {
 }
 
 void handle_backend_readable(Worker *w, PoolConn *conn) {
+    /* Shared connections run their own HELLO 3 handshake in line with the
+     * requests (see mux.c), so this goes before the resp3_handshake check. */
+    if (conn->pool->type == POOL_SHARED) {
+        mux_conn_readable(w, conn);
+        return;
+    }
     /* Checked first, regardless of pool type or conn->fanout_sub: a RESP3
      * handshake (lazy per-connection upgrade or the one-time global probe --
      * see hello.c) can be in flight on any kind of connection, including one
@@ -490,6 +525,12 @@ void handle_backend_readable(Worker *w, PoolConn *conn) {
 
 /* ── client writable: flush response buffer ─────────────────────────── */
 void handle_client_writable(Worker *w, ClientConn *client) {
+    /* Every one-command-at-a-time reply is written in CS_WRITING_RESP;
+     * anything else is multiplexed replies, written while input continues. */
+    if (client->state != CS_WRITING_RESP) {
+        mux_client_flush(w, client);
+        return;
+    }
     if (!client->wbuf || client->wbuf_len == 0) {
         fd_unwatch(w, client->fd, EL_WRITABLE);
         fd_watch(w, client->fd, EL_READABLE);
@@ -674,7 +715,10 @@ void handle_client_readable(Worker *w, ClientConn *client) {
     do {
         client_process_input(w, client);
         if (w->client_map[fd] != client) return; /* closed */
-    } while (client_has_buffered_input(client));
+        /* A multiplexed command leaves the client reading right away too,
+         * and the socket may not have been drained yet: edge-triggered epoll
+         * won't report what's left, so keep reading until EAGAIN. */
+    } while (client_has_buffered_input(client) || (!client->read_eagain && client_wants_input(client)));
 }
 
 static void client_process_input(Worker *w, ClientConn *client) {
@@ -868,6 +912,24 @@ static void client_process_input(Worker *w, ClientConn *client) {
     if (client_trim_hbuf(w, client, total_cmd_len) < 0) return;
 
     str_toupper(cmd);
+
+    /* Must come before route_command(), which has side effects: a command
+     * held back by the barrier is parsed again from scratch later. */
+    int mux_ok = client_can_mux(client, cmd, total_cmd_len);
+    if (!mux_ok && client_mux_busy(client)) {
+        /* Not multiplexable while earlier multiplexed replies are still
+         * owed: put it back and wait for those to be written out, then run
+         * it the one-at-a-time way below as if it were alone. */
+        if (client_unread(client, client->hbuf, client->hbuf_len) < 0) {
+            close_client(w, client);
+            return;
+        }
+        client->hbuf_len = 0;
+        client->mux_barrier = 1;
+        return;
+    }
+    client->mux_cmd = mux_ok;
+
     PoolType pt = route_command(client, cmd);
     CmdClass cls = classify_command(cmd, pt);
     client->total_cmd_len = total_cmd_len;
@@ -882,7 +944,11 @@ static void client_process_input(Worker *w, ClientConn *client) {
      * doesn't wait for the last argument's bytes -- read until the whole
      * (always small) command is in hbuf before dispatching it. PROXY and
      * INFO parse all their arguments from hbuf too, so they need the same. */
-    if ((!strcmp(cmd, "HELLO") || !strcmp(cmd, "PROXY") || !strcmp(cmd, "INFO")) && client->hbuf_len < total_cmd_len) {
+    /* A multiplexed single-key command is likewise sent whole from hbuf
+     * (client_can_mux() made sure it fits). */
+    int need_whole = !strcmp(cmd, "HELLO") || !strcmp(cmd, "PROXY") || !strcmp(cmd, "INFO") ||
+                     (client->mux_cmd && cls == CMD_CLASS_SINGLE_KEY);
+    if (need_whole && client->hbuf_len < total_cmd_len) {
         /* Too big to hold: reply with an error and skip the command's
          * bytes, so the connection and anything pipelined after it survive. */
         if (total_cmd_len > HDR_BUF_SIZE) {
@@ -1087,6 +1153,12 @@ static void client_process_input(Worker *w, ClientConn *client) {
             return;
         }
         client->node_idx = node_idx;
+
+        if (client->mux_cmd) {
+            if (mux_send_cmd(w, client, node_idx, slot, client->hbuf, client->hbuf_len) < 0) return;
+            mux_input_done(w, client);
+            return;
+        }
 
         DbGroup *grp = db_group_get(w, client->db);
         if (!grp) {
