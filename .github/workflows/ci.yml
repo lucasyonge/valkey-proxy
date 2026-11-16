@@ -57,7 +57,7 @@ jobs:
       image: valkey/valkey-bundle:${{ matrix.valkey }}
     steps:
       - name: Install build dependencies
-        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates gcc make libssl-dev
+        run: apt-get update && apt-get install -y --no-install-recommends ca-certificates gcc libc6-dev make libssl-dev
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       - name: Build proxy and test runner
         run: make -j4 valkey-proxy run-test
