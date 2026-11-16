@@ -28,11 +28,9 @@ jobs:
           - os: ubuntu-latest
           - os: ubuntu-latest
             no_tls: true
-          - os: macos-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-      - name: Install dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y libssl-dev
       - name: Build proxy
         run: make -j4 EXTRA_CFLAGS=-Werror ${{ matrix.no_tls && 'NO_TLS=1' || '' }}

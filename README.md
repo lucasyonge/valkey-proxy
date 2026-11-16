@@ -170,7 +170,7 @@ still going for the previous one.
 
 | Job | What it does |
 |---|---|
-| `build` | `make EXTRA_CFLAGS=-Werror` (Linux with and without TLS, macOS), `make test`, `make test-config` |
+| `build` | `make EXTRA_CFLAGS=-Werror` (Linux, with and without TLS), `make test`, `make test-config` |
 | `integration tests` | for Valkey 9.1 and 9.2, inside the `valkey/valkey-bundle` image (Valkey + bloom/json/search modules, search with `--use-coordinator`): starts a 3-master / 3-replica cluster on `127.0.0.1:7001-7006`, a proxy on `:7777` and a second proxy with the `reported_*` overrides on `:7778`, then runs the default suites with `--cluster` and `--reported`, followed by `--bloomfilter --json --search` |
 
 When the integration job fails, the proxy, node and test logs are uploaded as the
