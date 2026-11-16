@@ -49,8 +49,8 @@ jobs:
         # valkey-bundle ships valkey-server/valkey-cli together with the
         # bloom, json and search modules that the module suites need.
         # 9.0 lacks commands the suites expect (e.g. HGETDEL) and hangs them.
-        # Move 9.2-rc5 to 9.2 once that bundle tag is published.
-        valkey: ['9.1', '9.2-rc5']
+        # Move 9.2-rc2 to 9.2 once that bundle tag is published.
+        valkey: ['9.1', '9.2-rc2']
     container:
       image: valkey/valkey-bundle:${{ matrix.valkey }}
     steps:
