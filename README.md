@@ -162,6 +162,33 @@ never negotiated RESP3. For the same reason some RESP3 paths (e.g. the very firs
 `HELLO 3 AUTH ...`, which doubles as the RESP3 probe) are only really exercised on a **freshly
 started** proxy — restart it before a run to cover them.
 
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request (opened, each new commit, reopened), on
+every push to `main`, and on demand (`workflow_dispatch`). A new commit on a PR cancels the run
+still going for the previous one.
+
+| Job | What it does |
+|---|---|
+| `build` | `make EXTRA_CFLAGS=-Werror` (Linux with and without TLS, macOS), `make test`, `make test-config` |
+| `integration tests` | for Valkey 9.1 and 9.2, inside the `valkey/valkey-bundle` image (Valkey + bloom/json/search modules, search with `--use-coordinator`): starts a 3-master / 3-replica cluster on `127.0.0.1:7001-7006`, a proxy on `:7777` and a second proxy with the `reported_*` overrides on `:7778`, then runs the default suites with `--cluster` and `--reported`, followed by `--bloomfilter --json --search` |
+
+When the integration job fails, the proxy, node and test logs are uploaded as the
+`integration-logs-*` artifact of the run.
+
+The integration job is `tools/ci/integration.sh`, which also works locally. To reproduce it exactly,
+run it in the same image (on a Linux host with the repo checked out):
+
+```bash
+docker run --rm -v "$PWD":/src -w /src valkey/valkey-bundle:9.1 bash -c '
+  apt-get update && apt-get install -y gcc make libssl-dev &&
+  make clean && make && make test && tools/ci/integration.sh all'
+```
+
+Or, with `valkey-server`/`valkey-cli` on `PATH` and no modules: `make && make test && MODULE_SUITES= tools/ci/integration.sh all`.
+The script also takes `cluster`, `proxies`, `test` and `stop` to run one step at a time; logs are
+in `build/ci/`.
+
 ### Module tests
 
 Bloom Filter, JSON and Search tests are **not** included in the default run. They require the
